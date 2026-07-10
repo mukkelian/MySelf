@@ -1,0 +1,749 @@
+@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap');
+
+:root {
+  --bg: #191c22;
+  --panel: #21252e;
+  --panel-2: #262b36;
+  --border: #333947;
+  --text: #e7e9ee;
+  --text-dim: #9aa1b0;
+  --accent: #5ec8a8;
+  --accent-dim: #3c8b73;
+  --danger: #e2725b;
+  --font-display: 'Space Grotesk', system-ui, sans-serif;
+  --font-body: 'Inter', system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', 'Courier New', monospace;
+
+  /* Panel sizes the user can drag to resize (see .resizer in script.js) --
+     changing these here only sets the *default* on first load; once the
+     user drags a handle, the chosen size is saved to localStorage and wins. */
+  --sidebar-width: 230px;
+  --chat-sidebar-width: 320px;
+  --corner-size: 20px; /* size of the diagonal-resize corner handles on each panel box */
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-body);
+  font-size: 14px;
+}
+
+.app {
+  display: flex;
+  height: 100vh;
+}
+
+/* ================= SIDEBAR ================= */
+.sidebar {
+  width: var(--sidebar-width);
+  flex-shrink: 0;
+  background: var(--panel);
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  padding: 20px 14px;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 4px 8px 24px 8px;
+}
+
+.brand-mark {
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  background: var(--accent);
+  color: #10221c;
+  font-family: var(--font-display);
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.brand-name {
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 17px;
+  letter-spacing: 0.2px;
+}
+
+.nav {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.nav-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: transparent;
+  border: none;
+  color: var(--text-dim);
+  font-family: var(--font-body);
+  font-size: 14px;
+  font-weight: 500;
+  text-align: left;
+  padding: 10px 12px;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.nav-item:hover {
+  background: var(--panel-2);
+  color: var(--text);
+}
+
+.nav-item.active {
+  background: var(--panel-2);
+  color: var(--accent);
+}
+
+.nav-icon {
+  font-size: 15px;
+  width: 18px;
+  text-align: center;
+}
+
+.sidebar-status {
+  margin-top: auto;
+  padding: 12px 8px 4px 8px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.status-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--danger);
+  flex-shrink: 0;
+}
+
+.dot.ok { background: var(--accent); }
+
+/* ================= RESIZE HANDLES ================= */
+/* Thin draggable dividers between panels. Each one is wired up in script.js
+   (makeHorizontalResizer) to a CSS variable -- dragging it live-updates that
+   variable, and the chosen size is saved to localStorage so it survives a
+   reload. See --sidebar-width / --chat-sidebar-width in the :root block. */
+.resizer {
+  flex: 0 0 auto;
+  width: 10px;
+  cursor: col-resize;
+  position: relative;
+  z-index: 1;
+  align-self: stretch;
+}
+
+.resizer::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 4px;
+  width: 2px;
+  border-radius: 2px;
+  background: transparent;
+  transition: background 0.15s ease;
+}
+
+.resizer:hover::after,
+.resizer.dragging::after {
+  background: var(--accent);
+}
+
+/* ================= MAIN CONTENT ================= */
+.content {
+  flex: 1;
+  height: 100vh;
+  overflow: auto;
+  padding: 16px;
+  position: relative; /* containing block the resizable panel boxes are positioned against */
+}
+
+/* Each panel (Dataset / Fine-Tune / RAG / Chat) is an independently
+   resizable box: it starts filling the ENTIRE available space (no default
+   gap), but dragging one of its edge/corner handles (added in script.js --
+   makeResizablePanel) switches it to an explicit pixel left/top/width/height,
+   which is then remembered per panel in localStorage. Shrinking a panel
+   reveals the .content background around it; content that no longer fits
+   scrolls inside the panel. */
+.panel {
+  display: none;
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 100%;
+  height: 100%;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 32px 40px;
+  overflow: auto;
+}
+
+.panel.active { display: block; }
+#panel-chat.active { display: flex; flex-direction: column; }
+
+/* Drag handles on a resizable panel box: 4 edges (single-axis resize) + 4
+   corners (diagonal resize -- both axes at once). Every handle sits fully
+   INSIDE the panel's own border (never poking outside it), so it can never
+   push .content's scrollable area past its visible box and force a stray
+   scrollbar -- that was the bug behind the unwanted bar on the right edge. */
+.panel-resize-handle {
+  position: absolute;
+  z-index: 3;
+  user-select: none;
+}
+
+.panel-resize-handle::after {
+  content: "";
+  position: absolute;
+  background: transparent;
+  border-radius: 2px;
+  transition: background 0.15s ease;
+}
+
+.panel-resize-handle:hover::after,
+.panel-resize-handle.dragging::after {
+  background: var(--accent);
+}
+
+/* Straight edges -- inset by --corner-size at both ends so they never
+   overlap the corner squares. */
+.panel-resize-e, .panel-resize-w {
+  top: var(--corner-size);
+  bottom: var(--corner-size);
+  width: 8px;
+  cursor: ew-resize;
+}
+
+.panel-resize-e { right: 0; }
+.panel-resize-w { left: 0; }
+
+.panel-resize-e::after, .panel-resize-w::after {
+  top: 0;
+  bottom: 0;
+  left: 3px;
+  width: 2px;
+}
+
+.panel-resize-n, .panel-resize-s {
+  left: var(--corner-size);
+  right: var(--corner-size);
+  height: 8px;
+  cursor: ns-resize;
+}
+
+.panel-resize-n { top: 0; }
+.panel-resize-s { bottom: 0; }
+
+.panel-resize-n::after, .panel-resize-s::after {
+  left: 0;
+  right: 0;
+  top: 3px;
+  height: 2px;
+}
+
+/* Corners -- small squares, diagonal drag resizes both width AND height at
+   once. Inset a few px from the literal geometric corner so the hotzone
+   isn't clipped by the panel's own border-radius curve, and given a always-
+   visible dot (not just on hover) since a bare corner is otherwise too easy
+   to miss -- unlike the edges, there's no long line to run your cursor into. */
+.panel-resize-ne, .panel-resize-nw, .panel-resize-se, .panel-resize-sw {
+  width: var(--corner-size);
+  height: var(--corner-size);
+  z-index: 4;
+}
+
+.panel-resize-ne { top: 3px; right: 3px; cursor: nesw-resize; }
+.panel-resize-nw { top: 3px; left: 3px; cursor: nwse-resize; }
+.panel-resize-se { bottom: 3px; right: 3px; cursor: nwse-resize; }
+.panel-resize-sw { bottom: 3px; left: 3px; cursor: nesw-resize; }
+
+.panel-resize-ne::after, .panel-resize-nw::after,
+.panel-resize-se::after, .panel-resize-sw::after {
+  top: 50%;
+  left: 50%;
+  width: 6px;
+  height: 6px;
+  margin: -3px 0 0 -3px;
+  background: var(--text-dim);
+  opacity: 0.55;
+  border-radius: 50%;
+}
+
+.panel-resize-ne:hover::after, .panel-resize-nw:hover::after,
+.panel-resize-se:hover::after, .panel-resize-sw:hover::after,
+.panel-resize-ne.dragging::after, .panel-resize-nw.dragging::after,
+.panel-resize-se.dragging::after, .panel-resize-sw.dragging::after {
+  background: var(--accent);
+  opacity: 1;
+}
+
+/* Move handle: grab a dot-grip to drag an inner box (.resizable-box) to a
+   new spot within its panel -- this only repositions it, width/height are
+   untouched. Each box gets two of these (top-right and bottom-left, either
+   one works) so there's always a grip within reach. Both sit inset from
+   their nearest resize corner (28-48px from that edge, clear of the
+   corner's 3-23px hotzone) so the two never fight for the same pixels.
+   Only added to inner boxes, not the panels themselves. */
+.box-move-handle {
+  position: absolute;
+  top: 4px;
+  right: 28px;
+  width: 20px;
+  height: 20px;
+  z-index: 5;
+  border-radius: 4px;
+  cursor: move;
+  background-image: radial-gradient(circle, var(--text-dim) 1px, transparent 1.2px);
+  background-size: 6px 6px;
+  background-position: 2px 2px;
+  opacity: 0.5;
+  transition: opacity 0.15s ease;
+}
+
+.box-move-handle-bl {
+  top: auto;
+  right: auto;
+  bottom: 4px;
+  left: 28px;
+}
+
+.box-move-handle:hover,
+.box-move-handle.dragging {
+  opacity: 1;
+}
+
+.box-move-handle.dragging {
+  background-image: radial-gradient(circle, var(--accent) 1px, transparent 1.2px);
+}
+
+.panel-header h1 {
+  font-family: var(--font-display);
+  font-size: 26px;
+  margin: 0 0 8px 0;
+}
+
+.panel-header p {
+  color: var(--text-dim);
+  margin: 0 0 28px 0;
+  line-height: 1.5;
+}
+
+.panel-header code {
+  font-family: var(--font-mono);
+  background: var(--panel-2);
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: 12.5px;
+}
+
+.card {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 22px;
+  margin-bottom: 20px;
+}
+
+/* A .resizable-box starts out sitting in normal document flow like any
+   other .card / .active-banner, but the first time its panel is opened,
+   script.js (convertPanelInnerBoxes) measures its current position/size and
+   converts it into its own independently resizable box -- same 8-handle
+   mechanism as a panel, one level deeper. overflow:auto is safe to set here
+   upfront since it only has an effect once the box has an explicit height
+   smaller than its content. */
+.resizable-box {
+  overflow: auto;
+}
+
+.field-label {
+  display: block;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-dim);
+  margin-bottom: 8px;
+}
+
+input[type="text"], input[type="number"], textarea, select {
+  width: 100%;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 10px 12px;
+  border-radius: 8px;
+  font-family: var(--font-mono);
+  font-size: 13px;
+}
+
+textarea {
+  resize: vertical;
+  font-family: var(--font-body);
+  line-height: 1.5;
+}
+
+select {
+  cursor: pointer;
+}
+
+input:focus, textarea:focus, select:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.checkbox-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 18px;
+  font-size: 13px;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+
+.checkbox-row input[type="checkbox"] {
+  width: auto;
+  cursor: pointer;
+}
+
+.path-row {
+  display: flex;
+  gap: 8px;
+}
+
+.path-row input { flex: 1; }
+
+.btn {
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 10px 16px;
+  border-radius: 8px;
+  font-family: var(--font-body);
+  font-weight: 500;
+  font-size: 13px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.btn:hover { border-color: var(--accent); }
+
+.btn.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #10221c;
+}
+
+.btn.primary:hover { background: var(--accent-dim); }
+
+.btn.danger { border-color: var(--danger); color: var(--danger); }
+.btn.danger:hover:not(:disabled) { background: rgba(226, 114, 91, 0.12); }
+
+.btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+  border-color: var(--border);
+  background: var(--panel-2);
+  color: var(--text-dim);
+}
+
+.btn.big {
+  width: 100%;
+  padding: 13px;
+  margin-top: 18px;
+  font-size: 14px;
+}
+
+.hint {
+  margin-top: 10px;
+  font-size: 12.5px;
+  color: var(--text-dim);
+}
+
+.hint.error { color: var(--danger); }
+.hint.success { color: var(--accent); }
+
+.browser {
+  max-height: 260px;
+  overflow-y: auto;
+}
+
+.browser-path {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text-dim);
+  margin-bottom: 10px;
+  word-break: break-all;
+}
+
+.browser-list button {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: none;
+  color: var(--text);
+  padding: 6px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+}
+
+.browser-list button:hover { background: var(--panel-2); }
+
+.hidden { display: none; }
+
+.active-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 14px;
+  margin-bottom: 20px;
+  font-size: 13px;
+  color: var(--text-dim);
+  flex-shrink: 0;
+}
+
+.active-banner strong {
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-weight: 600;
+  word-break: break-all;
+}
+
+.success-card {
+  border-color: var(--accent-dim);
+}
+
+.grid-2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+
+.log-box {
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 14px;
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  color: var(--text-dim);
+  max-height: 260px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  margin: 0;
+}
+
+/* ================= CHAT ================= */
+/* --chat-sidebar-width (defined in :root above) sets the default width of
+   the right-hand settings panel; drag the .resizer handle between the two
+   columns to change it live -- see makeHorizontalResizer() in script.js. */
+.chat-layout {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+
+.chat-card { display: flex; flex-direction: column; flex: 1; min-width: 0; min-height: 0; }
+
+.chat-sidebar {
+  flex: 0 0 var(--chat-sidebar-width);
+  width: var(--chat-sidebar-width);
+  overflow-y: auto;
+}
+
+.chat-sidebar .path-row {
+  flex-direction: column;
+}
+
+.chat-toolbar {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 10px;
+  flex-shrink: 0;
+}
+
+.chat-log {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding-right: 4px;
+}
+
+.chat-bubble {
+  max-width: 100%;
+  padding: 10px 14px;
+  border-radius: 10px;
+  line-height: 1.45;
+}
+
+.chat-bubble.user .bubble-text {
+  white-space: pre-wrap;
+}
+
+.chat-bubble .stopped-note {
+  display: block;
+  margin-top: 6px;
+  font-size: 11px;
+  font-style: italic;
+  color: var(--text-dim);
+}
+
+/* ---- markdown / code / table / KaTeX rendering inside bot replies ---- */
+.chat-bubble.bot .bubble-text {
+  display: block;
+}
+
+.chat-bubble.bot .bubble-text > *:first-child { margin-top: 0; }
+.chat-bubble.bot .bubble-text > *:last-child { margin-bottom: 0; }
+
+.chat-bubble.bot .bubble-text p {
+  margin: 0 0 10px 0;
+  white-space: pre-wrap;
+}
+
+.chat-bubble.bot .bubble-text ul,
+.chat-bubble.bot .bubble-text ol {
+  margin: 0 0 10px 0;
+  padding-left: 22px;
+}
+
+.chat-bubble.bot .bubble-text li { margin-bottom: 4px; }
+
+.chat-bubble.bot .bubble-text blockquote {
+  margin: 0 0 10px 0;
+  padding: 2px 12px;
+  border-left: 3px solid var(--accent-dim);
+  color: var(--text-dim);
+}
+
+.chat-bubble.bot .bubble-text a {
+  color: var(--accent);
+}
+
+.chat-bubble.bot .bubble-text code {
+  font-family: var(--font-mono);
+  background: rgba(0, 0, 0, 0.25);
+  padding: 1px 5px;
+  border-radius: 4px;
+  font-size: 12.5px;
+}
+
+.chat-bubble.bot .bubble-text pre {
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px;
+  overflow-x: auto;
+  margin: 0 0 10px 0;
+}
+
+.chat-bubble.bot .bubble-text pre code {
+  background: none;
+  padding: 0;
+}
+
+.chat-bubble.bot .bubble-text table {
+  border-collapse: collapse;
+  margin: 0 0 10px 0;
+  font-size: 12.5px;
+  display: block;
+  overflow-x: auto;
+}
+
+.chat-bubble.bot .bubble-text th,
+.chat-bubble.bot .bubble-text td {
+  border: 1px solid var(--border);
+  padding: 5px 10px;
+}
+
+.chat-bubble.bot .bubble-text .katex-display {
+  overflow-x: auto;
+  overflow-y: hidden;
+  margin: 8px 0;
+}
+
+.chat-bubble.user {
+  align-self: flex-end;
+  background: var(--accent);
+  color: #10221c;
+}
+
+.chat-bubble.bot {
+  align-self: flex-start;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+}
+
+.copy-btn {
+  align-self: flex-end;
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  padding: 2px 8px;
+  border-radius: 6px;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.copy-btn:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.chat-input-row {
+  display: flex;
+  gap: 8px;
+  margin-top: 14px;
+  align-items: flex-end;
+}
+
+.chat-input-row textarea {
+  flex: 1;
+  resize: none;
+  max-height: 160px;
+  line-height: 1.4;
+}
+
+#datasetPreview {
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  color: var(--text-dim);
+  white-space: pre-wrap;
+}
