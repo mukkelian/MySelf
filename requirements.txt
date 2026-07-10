@@ -1,0 +1,10 @@
+fastapi
+uvicorn[standard]
+pydantic
+transformers
+datasets
+peft
+accelerate
+sentence-transformers
+torch
+numpy
