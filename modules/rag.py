@@ -1,21 +1,12 @@
 """
-rag.py
-------
-Simple Retrieval-Augmented Generation over a mix of Q&A pairs and raw text
-chunks (see data_manager.load_text_chunks):
+Lets the model look up relevant Q&A pairs and notes before answering, so it
+can give better answers without needing to be retrained.
 
-  1. build_index()  - embeds every entry (Q&A pair or text chunk) with a
-                       sentence-transformer and saves the embeddings +
-                       entries to disk, tagged with their type so retrieval
-                       can format each one appropriately later.
-  2. retrieve()      - embeds the user's question, finds the most similar
-                       stored entries with plain cosine similarity (no extra
-                       vector-database dependency needed for a small
-                       personal knowledge base). Q&A pairs and text chunks
-                       share one index, so retrieval blends both by
-                       similarity rather than treating them separately.
-  3. answer()        - builds a prompt with the retrieved context and asks
-                       the loaded LLM to answer using it.
+  1. build_index() - reads all your Q&A pairs and notes, and saves them in a
+                      searchable form.
+  2. retrieve()     - finds the entries most relevant to a question.
+  3. answer()       - looks up relevant entries, then asks the model to
+                      answer using them.
 """
 
 import json
@@ -45,9 +36,7 @@ def build_index(
     device_preference: str = "auto",
     log=print,
 ) -> str:
-    """Embed every Q&A pair and text chunk and save (embeddings.npy +
-    pairs.json) to index_dir. Each entry is tagged with a "type" ("qa" or
-    "text") so retrieve()/answer() know how to format it later."""
+    """Turn every Q&A pair and note into a searchable form and save it to index_dir."""
     entries = [{"type": "qa", "question": p["question"], "answer": p["answer"]} for p in qa_pairs]
     entries += [{"type": "text", "text": t} for t in text_chunks]
 
@@ -85,12 +74,12 @@ def _load_index(index_dir: str):
 
 
 def retrieve(question: str, index_dir: str, top_k: int = 3) -> list:
-    """Return the top_k most similar entries (Q&A pairs and/or text chunks) to `question`."""
+    """Find the entries that best match a question."""
     embeddings, entries, embedding_model, device = _load_index(index_dir)
     embedder = _get_embedder(embedding_model, device)
 
     query_vec = embedder.encode([question], normalize_embeddings=True)[0]
-    scores = embeddings @ query_vec  # cosine similarity (vectors are normalized)
+    scores = embeddings @ query_vec  # how closely each entry matches the question
     top_indices = np.argsort(scores)[::-1][:top_k]
 
     return [entries[i] for i in top_indices]
@@ -107,8 +96,7 @@ def answer(
     max_history_turns: int = model_manager.MAX_HISTORY_TURNS,
     stop_event=None,
 ) -> str:
-    """Retrieve context for `question` and ask the loaded LLM to answer using
-    it, continuing the conversation in `history` (see model_manager.generate)."""
+    """Look up relevant context for `question` and ask the model to answer using it."""
     context_entries = retrieve(question, index_dir, top_k)
     lines = [
         f"- Q: {e['question']}\n  A: {e['answer']}" if e["type"] == "qa" else f"- {e['text']}"

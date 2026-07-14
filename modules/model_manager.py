@@ -1,18 +1,25 @@
 """
-model_manager.py
-----------------
-Loads a Hugging Face model + tokenizer that already lives on the user's
-laptop (a folder produced by `save_pretrained`, or a `git clone` of a HF
-repo, or a folder downloaded with `huggingface-cli download`).
-
-We keep ONE model + tokenizer cached in memory at a time (`_CACHE`) so the
-dashboard does not reload multi-GB weights on every chat message.
+Loads a model from a folder on your computer and keeps it ready in memory,
+so the app doesn't have to reload it every time you send a chat message.
 """
 
 import os
 import threading
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer, StoppingCriteria, StoppingCriteriaList
+
+import config
+
+def apply_cpu_thread_setting(threads=None):
+    """Set how many CPU threads the app is allowed to use. Leaving it blank
+    lets the computer pick automatically."""
+    if threads is None:
+        threads = config.load_settings().get("cpu_threads")
+    if threads:
+        torch.set_num_threads(threads)
+
+
+apply_cpu_thread_setting()
 
 _CACHE = {"path": None, "device": None, "model": None, "tokenizer": None}
 
@@ -26,10 +33,7 @@ DEFAULT_SYSTEM_PROMPT = (
 MAX_HISTORY_TURNS = 6
 
 class _StopOnEvent(StoppingCriteria):
-    """Lets /api/chat/stop interrupt a generation already in progress: HF
-    checks this once per generated token, so setting the event stops the
-    loop after the token currently being produced rather than waiting for
-    max_new_tokens."""
+    """Lets the Stop button interrupt a reply that's already being generated."""
 
     def __init__(self, stop_event: threading.Event):
         self.stop_event = stop_event
@@ -39,17 +43,14 @@ class _StopOnEvent(StoppingCriteria):
 
 
 def is_valid_model_folder(path: str) -> bool:
-    """A folder is a usable HF model if it has a config.json in it."""
+    """Check whether a folder actually contains a usable model."""
     return os.path.isfile(os.path.join(path, "config.json"))
 
 
 def get_device(preference: str = "auto") -> str:
-    """Resolve a device preference ("auto" / "cpu" / "gpu") to a torch device string.
-
-    "auto" keeps the original behaviour (best available device). "gpu" is
-    strict: it raises if no CUDA/MPS device exists, rather than silently
-    falling back to CPU, so a user who explicitly asked for GPU finds out.
-    """
+    """Figure out whether to run on the CPU or GPU. "auto" picks the best
+    available option; "gpu" fails loudly if no GPU is found instead of
+    silently falling back to CPU."""
     if preference == "cpu":
         return "cpu"
 
@@ -71,10 +72,10 @@ def get_device(preference: str = "auto") -> str:
 
 
 def load_model(model_path: str, device_preference: str = "auto"):
-    """Load (or reuse the cached) tokenizer + model from a local folder."""
+    """Load a model from a folder, or reuse it if it's already loaded."""
     if not is_valid_model_folder(model_path):
         raise ValueError(
-            f"'{model_path}' does not look like a Hugging Face model folder "
+            f"'{model_path}' does not look like a valid model folder "
             "(no config.json found inside it)."
         )
 
@@ -89,15 +90,16 @@ def load_model(model_path: str, device_preference: str = "auto"):
 
     model = AutoModelForCausalLM.from_pretrained(
         model_path,
-        torch_dtype=torch.float32,
+        dtype=torch.float32,
     ).to(device)
+    model.generation_config.max_length = None
 
     _CACHE.update({"path": model_path, "device": device, "model": model, "tokenizer": tokenizer})
     return model, tokenizer
 
 
 def clear_cache():
-    """Drop the cached model, e.g. after fine-tuning replaces it on disk."""
+    """Forget the currently loaded model, e.g. after it's replaced by a fine-tuned version."""
     _CACHE.update({"path": None, "device": None, "model": None, "tokenizer": None})
 
 
@@ -111,21 +113,9 @@ def generate(
     device_preference: str = "auto",
     stop_event: threading.Event | None = None,
 ) -> str:
-    """Generate an answer to `question` (optionally grounded in RAG `context`),
-    continuing the conversation in `history` (a list of {"question", "answer"}
-    dicts for turns already completed this session -- see app.py's /api/chat).
-
-    `max_history_turns` caps how many of the most recent turns are actually
-    sent (0 disables memory entirely); `max_new_tokens` caps the reply
-    length. Both are user-configurable in the Chat panel's memory settings.
-
-    Instruct-tuned models (SmolLM2-Instruct, TinyLlama-Chat, ...) only give a
-    real answer when the prompt matches the chat format they were trained on;
-    feeding them a bare "Question: ...\\nAnswer:" string makes them emit their
-    end-of-turn token immediately, i.e. an empty reply. So whenever the
-    tokenizer ships a chat template we use it; base/completion models with no
-    chat_template fall back to the plain Q/A prompt.
-    """
+    """Generate a reply to `question`, optionally using RAG `context` and the
+    earlier conversation in `history`. Uses whichever prompt style the model
+    expects, so replies come out sensible instead of blank."""
     model, tokenizer = load_model(model_path, device_preference)
     device = get_device(device_preference)
 

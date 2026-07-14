@@ -1,25 +1,7 @@
 """
-finetune.py
------------
-Fine-tunes the selected local model on the selected Q&A pairs and/or raw
-text chunks using LoRA (via the `peft` library) so that even a laptop /
-small GPU can train a small model in a reasonable time.
-
-Each Q&A pair is turned into one instruction-style training example:
-
-    Question: <question>
-    Answer: <answer>
-
-Each raw text chunk (see data_manager.load_text_chunks) is trained as plain
-next-token continuation instead -- no template, the model just learns to
-predict this text. Both kinds of examples are tokenized the same way and
-trained together in one run via ordinary causal-LM loss, so mixing
-instruction-style and raw-continuation data in the same dataset folder
-works without any special-casing in the training loop itself.
-
-`train()` is written as one blocking function on purpose (simple to read).
-The web server calls it in a background thread so the dashboard is not
-frozen while training runs.
+Trains your chosen model on your Q&A pairs (and any plain text files you
+added), so it learns to answer the way you taught it. Uses a lightweight
+training method (LoRA) by default so it can run on a normal laptop.
 """
 
 import os
@@ -67,15 +49,11 @@ def _build_dataset(pairs, text_chunks, tokenizer, max_length):
 
 
 def train(model_path: str, qa_pairs: list, text_chunks: list, params: dict, log=print):
-    """Run fine-tuning and save the result to params['staging_dir'].
+    """Train the model and save the result to params['staging_dir'].
 
-    params keys: epochs, learning_rate, batch_size, lora_r, lora_alpha,
-    lora_dropout, max_length, staging_dir, full_finetune, device
-
-    When full_finetune is true, all base model parameters are trained
-    directly (no LoRA adapters). Otherwise LoRA adapters are trained and
-    merged back into the base model before saving, so either way the
-    result is a plain, ready-to-load Hugging Face model folder.
+    If full_finetune is on, the whole model is retrained (slower, more
+    thorough). Otherwise only small LoRA adapters are trained, which is
+    much faster, then blended back into the model before saving.
     """
     if not qa_pairs and not text_chunks:
         raise ValueError("No Q&A pairs or text found in the selected dataset folder.")

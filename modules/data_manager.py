@@ -1,24 +1,10 @@
 """
-data_manager.py
----------------
-Everything related to dataset folders. A dataset folder can hold two kinds
-of files, and both can be mixed in the same folder:
-
-  - Q&A pairs, in .json / .jsonl / .csv:
-      [ {"question": "...", "answer": "..."}, ... ]        # a JSON list
-      {"question": "...", "answer": "..."}\\n{"question": ...}   # JSONL
-      question,answer\\n"...","..."                          # CSV with header
-
-  - raw text, in .txt / .md: any plain-language document. There's no
-    question/answer structure to parse here -- load_text_chunks() just
-    splits it into overlapping word chunks, which Fine-Tune trains on as
-    plain next-token continuation and RAG embeds directly for retrieval.
-
-This module also handles browsing the local filesystem so the dashboard can
-let a user pick a folder (browsers cannot see local paths on their own, so
-the backend does the listing and the frontend just shows it).
+Handles reading, saving, editing, and browsing your Q&A files and notes.
+Q&A pairs can be stored as .json, .jsonl, or .csv; plain notes can be .txt
+or .md files, and get split into smaller chunks for training/search.
 """
 
+import contextlib
 import csv
 import json
 import os
@@ -29,16 +15,31 @@ SUPPORTED_EXTENSIONS = (".json", ".jsonl", ".csv")
 TEXT_EXTENSIONS = (".txt", ".md")
 
 
-def pick_folder(initial_dir: str = "") -> str | None:
-    """Open the OS's native folder picker on the machine running the server
-    and return the chosen path, or None if the user cancelled.
+@contextlib.contextmanager
+def _tk_root():
+    """A hidden helper window needed to open a native file dialog."""
+    import tkinter as tk
 
-    The dashboard is only ever opened on the same machine it runs on, so
-    popping a real file manager dialog (rather than an in-page listing) is
-    both possible and the more familiar experience.
-    """
+    root = tk.Tk()
+    root.withdraw()
+    root.attributes("-topmost", True)
+    try:
+        yield root
+    finally:
+        root.destroy()
+
+
+def pick_folder(initial_dir: str = "") -> str | None:
+    """Open a folder picker window and return the folder the user chose (or None if they cancelled)."""
     initial_dir = os.path.abspath(initial_dir) if initial_dir and os.path.isdir(initial_dir) else os.path.expanduser("~")
 
+    try:
+        from tkinter import filedialog
+        with _tk_root():
+            selected = filedialog.askdirectory(initialdir=initial_dir, title="Select a folder")
+        return selected or None
+    except ImportError:
+        pass
     if shutil.which("zenity"):
         result = subprocess.run(
             ["zenity", "--file-selection", "--directory", "--title=Select a folder",
@@ -54,15 +55,65 @@ def pick_folder(initial_dir: str = "") -> str | None:
         )
         return result.stdout.strip() or None if result.returncode == 0 else None
 
-    import tkinter as tk
-    from tkinter import filedialog
+    return None
 
-    root = tk.Tk()
-    root.withdraw()
-    root.attributes("-topmost", True)
-    selected = filedialog.askdirectory(initialdir=initial_dir, title="Select a folder")
-    root.destroy()
-    return selected or None
+
+def _resolve_initial_dir(path: str) -> str:
+    """Figure out which folder a file dialog should open in, falling back to the home folder."""
+    if path and os.path.isdir(path):
+        return os.path.abspath(path)
+    if path and os.path.isfile(path):
+        return os.path.dirname(os.path.abspath(path))
+    return os.path.expanduser("~")
+
+
+def _ensure_supported_extension(path: str | None) -> str | None:
+    """If the user typed a filename with no extension at all, default it to .json."""
+    if not path or os.path.splitext(path)[1]:
+        return path
+    return path + ".json"
+
+
+def pick_save_file(initial_path: str = "") -> str | None:
+    """Open the Browse dialog for choosing or creating a Q&A file."""
+    initial_dir = _resolve_initial_dir(initial_path)
+
+    try:
+        from tkinter import filedialog
+        with _tk_root():
+            selected = filedialog.asksaveasfilename(
+                initialdir=initial_dir, title="Choose or create a Q&A file",
+                filetypes=[("JSON", "*.json"), ("JSON Lines", "*.jsonl"), ("CSV", "*.csv"), ("All files", "*.*")],
+                defaultextension=".json",
+            )
+        return _ensure_supported_extension(selected or None)
+    except ImportError:
+        pass
+
+    if shutil.which("zenity"):
+        result = subprocess.run(
+            ["zenity", "--file-selection", "--save", "--title=Choose or create a Q&A file",
+             f"--filename={initial_dir}/",
+             "--file-filter=JSON (*.json) | *.json",
+             "--file-filter=JSON Lines (*.jsonl) | *.jsonl",
+             "--file-filter=CSV (*.csv) | *.csv",
+             "--file-filter=All Q&A files | *.json *.jsonl *.csv",
+             "--file-filter=All files (*) | *"],
+            capture_output=True, text=True,
+        )
+        path = result.stdout.strip() or None if result.returncode == 0 else None
+        return _ensure_supported_extension(path)
+
+    if shutil.which("kdialog"):
+        result = subprocess.run(
+            ["kdialog", "--getsavefilename", initial_dir,
+             "*.json|JSON\n*.jsonl|JSON Lines\n*.csv|CSV\n*|All files (*)"],
+            capture_output=True, text=True,
+        )
+        path = result.stdout.strip() or None if result.returncode == 0 else None
+        return _ensure_supported_extension(path)
+
+    return None
 
 
 def _load_json_file(full_path: str) -> list:
@@ -117,13 +168,8 @@ def load_qa_pairs(dataset_path: str) -> list:
 
 
 def _chunk_text(text: str, chunk_size: int, overlap: int) -> list:
-    """Split `text` into overlapping word chunks.
-
-    Word-based (not character-based) so chunk_size roughly tracks token
-    count without needing a tokenizer here. `overlap` repeats the tail of
-    each chunk at the start of the next one, so a fact split across a chunk
-    boundary still appears whole in at least one chunk.
-    """
+    """Split text into smaller overlapping pieces, so no sentence gets cut off
+    right at a chunk boundary and lost."""
     words = text.split()
     if not words:
         return []
@@ -141,9 +187,7 @@ def _chunk_text(text: str, chunk_size: int, overlap: int) -> list:
 
 
 def load_text_chunks(dataset_path: str, chunk_size: int = 200, overlap: int = 40) -> list:
-    """Load every .txt/.md file in the folder and split each into overlapping
-    word chunks. Unlike Q&A files, there's no structure to parse -- this is
-    for raw documents (notes, articles, transcripts, ...)."""
+    """Load every .txt/.md file in the folder and split each into smaller pieces."""
     if not os.path.isdir(dataset_path):
         raise ValueError(f"Dataset folder not found: {dataset_path}")
 
@@ -158,16 +202,6 @@ def load_text_chunks(dataset_path: str, chunk_size: int = 200, overlap: int = 40
         chunks.extend(_chunk_text(text, chunk_size, overlap))
 
     return chunks
-
-
-def list_dataset_files(dataset_path: str) -> list:
-    """List the supported Q&A files inside a dataset folder (for the 'target file' picker)."""
-    if not os.path.isdir(dataset_path):
-        raise ValueError(f"Dataset folder not found: {dataset_path}")
-    return sorted(
-        name for name in os.listdir(dataset_path)
-        if os.path.splitext(name)[1].lower() in SUPPORTED_EXTENSIONS
-    )
 
 
 def _append_json_file(full_path: str, pair: dict) -> None:
@@ -197,36 +231,20 @@ def _append_csv_file(full_path: str, pair: dict) -> None:
         writer.writerow(pair)
 
 
-def append_qa_pair(dataset_path: str, filename: str, question: str, answer: str, create_new: bool) -> str:
-    """Append one pasted Q&A pair to a file inside dataset_path.
-
-    If create_new is True, `filename` is created (forced to .jsonl unless the
-    caller already gave it a supported extension). Otherwise it must already
-    exist, and the pair is appended in whatever format that file already uses.
-    """
-    if not os.path.isdir(dataset_path):
-        raise ValueError(f"Dataset folder not found: {dataset_path}")
+def append_qa_pair_to_file(full_path: str, question: str, answer: str) -> None:
+    """Add one Q&A pair to the chosen file, creating the file first if it doesn't exist yet."""
     if not question.strip() or not answer.strip():
         raise ValueError("Both question and answer are required.")
 
-    filename = os.path.basename(filename or "").strip()
-    if not filename:
-        raise ValueError("A target filename is required.")
+    full_path = (full_path or "").strip()
+    if not full_path:
+        raise ValueError("Choose a file to save to first (Save As or Browse).")
 
-    ext = os.path.splitext(filename)[1].lower()
-    if create_new:
-        if ext not in SUPPORTED_EXTENSIONS:
-            filename += ".jsonl"
-            ext = ".jsonl"
-        full_path = os.path.join(dataset_path, filename)
-        if os.path.exists(full_path):
-            raise ValueError(f"'{filename}' already exists in the dataset folder.")
-    else:
-        if ext not in SUPPORTED_EXTENSIONS:
-            raise ValueError(f"'{filename}' is not a supported dataset file (.json/.jsonl/.csv).")
-        full_path = os.path.join(dataset_path, filename)
-        if not os.path.exists(full_path):
-            raise ValueError(f"'{filename}' does not exist in the dataset folder.")
+    ext = os.path.splitext(full_path)[1].lower()
+    if ext not in SUPPORTED_EXTENSIONS:
+        raise ValueError(f"'{os.path.basename(full_path)}' is not a supported dataset file (.json/.jsonl/.csv).")
+
+    os.makedirs(os.path.dirname(full_path) or ".", exist_ok=True)
 
     pair = {"question": question.strip(), "answer": answer.strip()}
     if ext == ".jsonl":
@@ -236,14 +254,85 @@ def append_qa_pair(dataset_path: str, filename: str, question: str, answer: str,
     elif ext == ".csv":
         _append_csv_file(full_path, pair)
 
-    return full_path
+
+def _load_pairs(full_path: str) -> list:
+    ext = os.path.splitext(full_path)[1].lower()
+    if ext == ".json":
+        return _load_json_file(full_path)
+    if ext == ".jsonl":
+        return _load_jsonl_file(full_path)
+    if ext == ".csv":
+        return _load_csv_file(full_path)
+    return []
+
+
+def _write_pairs(full_path: str, pairs: list) -> None:
+    """Rewrite the whole file with the given list of pairs (used after editing or deleting one)."""
+    ext = os.path.splitext(full_path)[1].lower()
+    if ext == ".jsonl":
+        with open(full_path, "w", encoding="utf-8") as f:
+            for pair in pairs:
+                f.write(json.dumps(pair) + "\n")
+    elif ext == ".json":
+        with open(full_path, "w", encoding="utf-8") as f:
+            json.dump(pairs, f, indent=2)
+    elif ext == ".csv":
+        with open(full_path, "w", encoding="utf-8", newline="") as f:
+            writer = csv.DictWriter(f, fieldnames=["question", "answer"])
+            writer.writeheader()
+            for pair in pairs:
+                writer.writerow(pair)
+
+
+def _load_pairs_for_edit(full_path: str) -> tuple[str, list]:
+    """Check the file exists and is a supported type, then load its pairs."""
+    full_path = (full_path or "").strip()
+    if not full_path or not os.path.exists(full_path):
+        raise ValueError("That file no longer exists.")
+
+    ext = os.path.splitext(full_path)[1].lower()
+    if ext not in SUPPORTED_EXTENSIONS:
+        raise ValueError(f"'{os.path.basename(full_path)}' is not a supported dataset file (.json/.jsonl/.csv).")
+
+    return ext, _load_pairs(full_path)
+
+
+def update_qa_pair(full_path: str, index: int, question: str, answer: str) -> None:
+    """Replace one Q&A pair with edited text."""
+    if not question.strip() or not answer.strip():
+        raise ValueError("Both question and answer are required.")
+
+    _, pairs = _load_pairs_for_edit(full_path)
+    if not 0 <= index < len(pairs):
+        raise ValueError("That Q&A pair no longer exists (the file may have changed).")
+
+    pairs[index] = {"question": question.strip(), "answer": answer.strip()}
+    _write_pairs(full_path, pairs)
+
+
+def delete_qa_pair(full_path: str, index: int) -> None:
+    """Remove one Q&A pair."""
+    _, pairs = _load_pairs_for_edit(full_path)
+    if not 0 <= index < len(pairs):
+        raise ValueError("That Q&A pair no longer exists (the file may have changed).")
+
+    del pairs[index]
+    _write_pairs(full_path, pairs)
+
+
+def preview_qa_file(full_path: str) -> dict:
+    """List the Q&A pairs in one file, for the Preview box. A file that
+    doesn't exist yet just shows as empty instead of an error."""
+    if not full_path or not os.path.exists(full_path):
+        return {"count": 0, "preview": []}
+
+    pairs = _load_pairs(full_path)
+    return {"count": len(pairs), "preview": pairs[:200]}
 
 
 def dataset_summary(dataset_path: str) -> dict:
-    """Small preview used by the dashboard: how many Q&A pairs and text
-    chunks the folder holds, plus a few examples of each. The chunk count
-    here is only informational (chunked at the default size) -- Fine-Tune
-    and RAG each re-chunk with their own configured chunk size at train time."""
+    """Quick summary of a dataset folder: how many Q&A pairs and text
+    chunks it holds, plus a few examples of each."""
     pairs = load_qa_pairs(dataset_path)
     chunks = load_text_chunks(dataset_path)
     return {
