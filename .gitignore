@@ -13,7 +13,8 @@ models/
 rag_index/
 
 data/
-settings.json
+settings.json*
+chat_history.json
 
 .DS_Store
 *.swp
