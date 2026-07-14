@@ -8,3 +8,8 @@ accelerate
 sentence-transformers
 torch
 numpy
+faster-whisper
+sentencepiece
+sacremoses
+python-multipart
+psutil
