@@ -19,8 +19,8 @@
     </div>
 
     <nav class="nav">
-      <button class="nav-item active" data-panel="dataset">
-        <span class="nav-icon">▤</span> Dataset
+      <button class="nav-item active" data-panel="chat">
+        <span class="nav-icon">◔</span> Chat
       </button>
       <button class="nav-item" data-panel="finetune">
         <span class="nav-icon">◐</span> Fine-Tune
@@ -28,14 +28,19 @@
       <button class="nav-item" data-panel="rag">
         <span class="nav-icon">◈</span> RAG
       </button>
-      <button class="nav-item" data-panel="chat">
-        <span class="nav-icon">◔</span> Chat
+      <button class="nav-item" data-panel="dataset">
+        <span class="nav-icon">▤</span> Create Dataset
       </button>
     </nav>
 
     <div class="sidebar-status" id="sidebarStatus">
       <div class="status-row"><span class="dot" id="datasetDot"></span><span id="datasetStatusText">No dataset</span></div>
       <div class="status-row"><span class="dot" id="chatModelDot"></span><span id="chatModelStatusText">No chat model</span></div>
+      <div class="sidebar-threads">
+        <label class="field-label" for="cpuThreads">CPU threads</label>
+        <select id="cpuThreads" title="How many CPU threads MySelf uses for chat/fine-tune/RAG"></select>
+        <div class="hint" id="cpuThreadsHint"></div>
+      </div>
     </div>
   </aside>
 
@@ -44,200 +49,8 @@
   <!-- ============ MAIN CONTENT ============ -->
   <main class="content">
 
-    <!-- ---------- DATASET PANEL ---------- -->
-    <section class="panel active" id="panel-dataset">
-      <header class="panel-header">
-        <h1>Choose your Q&amp;A dataset</h1>
-        <p>Pick a local folder containing <code>.json</code>, <code>.jsonl</code>, or <code>.csv</code> files, each with <code>question</code> / <code>answer</code> fields.</p>
-      </header>
-
-      <div class="card resizable-box" id="datasetPathCard">
-        <label class="field-label">Dataset folder path</label>
-        <div class="path-row">
-          <input type="text" id="datasetPathInput" placeholder="/Users/you/data/my-qa" />
-          <button class="btn" id="browseDatasetBtn">Browse</button>
-          <button class="btn primary" id="selectDatasetBtn">Use this dataset</button>
-        </div>
-        <div class="hint" id="datasetHint"></div>
-      </div>
-
-      <div class="card resizable-box" id="datasetPreviewCard" style="display:none">
-        <label class="field-label">Preview</label>
-        <div id="datasetPreview"></div>
-      </div>
-
-      <div class="card resizable-box" id="datasetAddCard">
-        <label class="field-label">Add a Q&amp;A pair</label>
-        <p class="hint" style="margin-top:0">Paste or type a question and answer to add it straight to a dataset file, without leaving the browser.</p>
-        <label class="field-label">Question</label>
-        <textarea id="datasetQuestion" rows="2" placeholder="What's your favorite programming language?"></textarea>
-        <label class="field-label" style="margin-top:14px">Answer</label>
-        <textarea id="datasetAnswer" rows="3" placeholder="Python, for how quickly I can go from idea to working code."></textarea>
-
-        <label class="field-label" style="margin-top:14px">Save to</label>
-        <select id="datasetTargetFile"></select>
-        <input type="text" id="datasetNewFilename" class="hidden" placeholder="new-file-name.jsonl" style="margin-top:8px" />
-
-        <button class="btn primary big" id="datasetAddBtn">Add Q&amp;A pair</button>
-        <div class="hint" id="datasetAddHint"></div>
-      </div>
-    </section>
-
-    <!-- ---------- FINE-TUNE PANEL ---------- -->
-    <section class="panel" id="panel-finetune">
-      <header class="panel-header">
-        <h1>Fine-tune training</h1>
-        <p>Trains your model on every Q&amp;A pair, then saves a new model folder.</p>
-      </header>
-
-      <div class="active-banner resizable-box" id="ftActiveBanner">
-        <span class="dot" id="ftActiveDot"></span>
-        <span>Active model for fine-tuning: <strong id="ftActiveModelText">None selected</strong></span>
-      </div>
-
-      <div class="card resizable-box" id="ftModelCard">
-        <label class="field-label">Base model folder path</label>
-        <div class="path-row">
-          <input type="text" id="ftModelPathInput" placeholder="/Users/you/models/tinyllama-1.1b" />
-          <button class="btn" id="browseFtModelBtn">Browse</button>
-          <button class="btn primary" id="selectFtModelBtn">Use this model</button>
-        </div>
-        <div class="hint" id="ftModelHint"></div>
-      </div>
-
-      <div class="card resizable-box" id="ftDatasetCard">
-        <label class="field-label">Dataset folder path</label>
-        <div class="path-row">
-          <input type="text" id="ftDatasetPathInput" placeholder="/Users/you/data/my-qa" />
-          <button class="btn" id="browseFtDatasetBtn">Browse</button>
-          <button class="btn primary" id="selectFtDatasetBtn">Use this dataset</button>
-        </div>
-        <div class="hint" id="ftDatasetHint"></div>
-      </div>
-
-      <div class="card resizable-box" id="ftParamsCard">
-        <div class="grid-2">
-          <div>
-            <label class="field-label">Epochs</label>
-            <input type="number" id="ftEpochs" value="3" min="1" />
-          </div>
-          <div>
-            <label class="field-label">Learning rate</label>
-            <input type="number" id="ftLr" value="0.0002" step="0.0001" />
-          </div>
-          <div>
-            <label class="field-label">Batch size</label>
-            <input type="number" id="ftBatch" value="2" min="1" />
-          </div>
-          <div>
-            <label class="field-label">Max sequence length</label>
-            <input type="number" id="ftMaxLen" value="256" min="16" />
-          </div>
-          <div>
-            <label class="field-label">LoRA rank (r)</label>
-            <input type="number" id="ftLoraR" value="8" min="1" />
-          </div>
-          <div>
-            <label class="field-label">LoRA alpha</label>
-            <input type="number" id="ftLoraAlpha" value="16" min="1" />
-          </div>
-          <div>
-            <label class="field-label">Compute device</label>
-            <select id="ftDevice">
-              <option value="auto">Auto (GPU if available)</option>
-              <option value="cpu">CPU only</option>
-              <option value="gpu">GPU only</option>
-            </select>
-          </div>
-        </div>
-
-        <label class="checkbox-row">
-          <input type="checkbox" id="ftFullFinetune" />
-          Full fine-tuning (train all parameters instead of LoRA adapters — slower, no LoRA settings used)
-        </label>
-
-        <button class="btn primary big" id="startFinetuneBtn">Start fine-tuning</button>
-      </div>
-
-      <div class="card resizable-box" id="ftLogCard">
-        <label class="field-label">Training log</label>
-        <pre class="log-box" id="finetuneLog">Idle.</pre>
-      </div>
-
-      <div class="card hidden success-card resizable-box" id="ftCompleteCard">
-        <label class="field-label">Training complete</label>
-        <p>Where should the trained model be saved?</p>
-        <div class="path-row">
-          <input type="text" id="ftSaveDestInput" placeholder="/Users/you/models/my-finetuned-model" />
-          <button class="btn primary" id="ftSaveHereBtn">Save here</button>
-        </div>
-        <button class="btn" id="ftReplaceBtn" style="margin-top:10px">Replace original model</button>
-        <div class="hint" id="ftFinalizeHint"></div>
-      </div>
-    </section>
-
-    <!-- ---------- RAG PANEL ---------- -->
-    <section class="panel" id="panel-rag">
-      <header class="panel-header">
-        <h1>RAG training</h1>
-        <p>Embeds every Q&amp;A pair into a small vector index instead of changing the model's weights. The index is saved alongside the model you pick below, so Chat can find it automatically.</p>
-      </header>
-
-      <div class="active-banner resizable-box" id="ragActiveBanner">
-        <span class="dot" id="ragActiveDot"></span>
-        <span>Active model for RAG: <strong id="ragActiveModelText">None selected</strong></span>
-      </div>
-
-      <div class="card resizable-box" id="ragModelCard">
-        <label class="field-label">Model folder path</label>
-        <div class="path-row">
-          <input type="text" id="ragModelPathInput" placeholder="/Users/you/models/tinyllama-1.1b" />
-          <button class="btn" id="browseRagModelBtn">Browse</button>
-          <button class="btn primary" id="selectRagModelBtn">Use this model</button>
-        </div>
-        <div class="hint" id="ragModelHint"></div>
-      </div>
-
-      <div class="card resizable-box" id="ragDatasetCard">
-        <label class="field-label">Dataset folder path</label>
-        <div class="path-row">
-          <input type="text" id="ragDatasetPathInput" placeholder="/Users/you/data/my-qa" />
-          <button class="btn" id="browseRagDatasetBtn">Browse</button>
-          <button class="btn primary" id="selectRagDatasetBtn">Use this dataset</button>
-        </div>
-        <div class="hint" id="ragDatasetHint"></div>
-      </div>
-
-      <div class="card resizable-box" id="ragParamsCard">
-        <div class="grid-2">
-          <div>
-            <label class="field-label">Embedding model</label>
-            <input type="text" id="ragEmbed" value="sentence-transformers/all-MiniLM-L6-v2" />
-          </div>
-          <div>
-            <label class="field-label">Top-K retrieved pairs</label>
-            <input type="number" id="ragTopK" value="3" min="1" />
-          </div>
-          <div>
-            <label class="field-label">Compute device</label>
-            <select id="ragDevice">
-              <option value="auto">Auto (GPU if available)</option>
-              <option value="cpu">CPU only</option>
-              <option value="gpu">GPU only</option>
-            </select>
-          </div>
-        </div>
-        <button class="btn primary big" id="startRagBtn">Build RAG index</button>
-      </div>
-
-      <div class="card resizable-box" id="ragLogCard">
-        <label class="field-label">Indexing log</label>
-        <pre class="log-box" id="ragLog">Idle.</pre>
-      </div>
-    </section>
-
     <!-- ---------- CHAT PANEL ---------- -->
-    <section class="panel" id="panel-chat">
+    <section class="panel active" id="panel-chat">
       <header class="panel-header">
         <h1>Chat with yourself</h1>
         <p>Pick a model below. If a RAG index lives next to it, MySelf uses it automatically; otherwise it just generates directly.</p>
@@ -246,11 +59,14 @@
       <div class="chat-layout">
         <div class="card chat-card">
           <div class="chat-toolbar">
+            <label for="chatFontSize" class="chat-toolbar-label">Text size</label>
+            <select id="chatFontSize" title="Chat text size (px)"></select>
             <button class="btn" id="clearChatBtn">Clear chat</button>
           </div>
           <div class="chat-log" id="chatLog"></div>
           <div class="chat-input-row">
             <textarea id="chatInput" rows="1" placeholder="Ask a question... (Shift+Enter for a new line)"></textarea>
+            <button class="btn" id="chatMicBtn" title="Speak your question">🎤 Speak</button>
             <button class="btn primary" id="chatSendBtn">Send</button>
             <button class="btn danger" id="chatStopBtn" disabled>Stop</button>
           </div>
@@ -259,12 +75,12 @@
         <div class="resizer" id="chatResizer"></div>
 
         <aside class="chat-sidebar">
-          <div class="active-banner resizable-box" id="chatActiveBanner">
-            <span class="dot" id="chatActiveDot"></span>
-            <span>Chatting with: <strong id="chatActiveModelText">None selected</strong></span>
-          </div>
+          <div class="card" id="chatSidebarCard">
+            <div class="active-banner" id="chatActiveBanner">
+              <span class="dot" id="chatActiveDot"></span>
+              <span>Chatting with: <strong id="chatActiveModelText">None selected</strong></span>
+            </div>
 
-          <div class="card resizable-box" id="chatModelCard">
             <label class="field-label">Model to chat with</label>
             <div class="path-row">
               <input type="text" id="chatModelPathInput" placeholder="/Users/you/models/tinyllama-1.1b" />
@@ -280,18 +96,294 @@
               <option value="gpu">GPU only</option>
             </select>
             <div class="hint" id="chatDeviceHint"></div>
-          </div>
 
-          <div class="card resizable-box" id="chatMemoryCard">
+            <hr class="sidebar-divider" />
+
             <label class="field-label">Conversation memory (turns)</label>
             <input type="number" id="chatHistoryTurns" min="0" max="20" value="6" />
-            <div class="hint">How many previous question/answer turns to send as context. 0 = no memory, each message stands alone.</div>
+            <div class="hint">How many previous question/answer turns to send as context. 0 = no memory, each message stands alone. Preserved across restarts.</div>
 
             <label class="field-label" style="margin-top:14px">Max response length (tokens)</label>
             <input type="number" id="chatMaxTokens" min="32" max="2000" step="16" value="400" />
             <div class="hint">Higher allows longer answers (e.g. a full cover letter) but generates more slowly.</div>
 
             <div class="hint" id="chatMemoryHint"></div>
+
+            <hr class="sidebar-divider" />
+
+            <label class="checkbox-row">
+              <input type="checkbox" id="chatAudioMode" checked />
+              Audio mode (auto-play replies)
+            </label>
+            <div class="hint">
+              On: every reply is read aloud automatically. Off: replies stay silent until you press ▶ on
+              them yourself.
+            </div>
+
+            <label class="field-label" style="margin-top:14px">Speak in</label>
+            <select id="chatSttLanguage"></select>
+            <div class="hint">Language you'll speak when you click 🎤, and the chat box shows your question in.</div>
+
+            <label class="field-label" style="margin-top:14px">Hear replies in</label>
+            <select id="chatTtsLanguage"></select>
+            <div class="hint">
+              The chat box shows replies translated into this language too (not just the audio). Pick
+              "Hinglish" to keep the reply text in English but hear it read with a Hindi accent instead of a
+              full Hindi translation.
+            </div>
+
+            <div class="hint" id="chatLanguageHint"></div>
+
+            <hr class="sidebar-divider" />
+
+            <label class="field-label">Speech-to-text model</label>
+            <select id="chatSttModel"></select>
+            <div class="hint">Whisper model size used to transcribe your 🎤 recording. Bigger = more accurate but slower.</div>
+
+            <label class="field-label" style="margin-top:14px">Text-to-speech engine</label>
+            <select id="chatTtsEngine">
+              <option value="auto">Auto (Bark, falls back to espeak-ng)</option>
+              <option value="bark">Bark only (natural voice, slower)</option>
+              <option value="espeak">espeak-ng only (robotic voice, instant)</option>
+            </select>
+            <div class="hint" id="chatVoiceHint">Force espeak-ng for instant replies, or Bark for the more natural (but slower) voice.</div>
+
+            <label class="field-label" style="margin-top:14px">Translation model (advanced)</label>
+            <div class="path-row">
+              <input type="text" id="chatTranslateModel" placeholder="Helsinki-NLP/opus-mt-en-xx (default)" />
+              <button class="btn" id="browseChatTranslateModelBtn">Browse</button>
+            </div>
+            <div class="hint" id="chatTranslateModelHint">
+              Leave blank to use the default Apache-2.0 Helsinki-NLP/opus-mt-en-XX model per language. Override with
+              any other Hugging Face seq2seq translation model id, or browse to a local model folder -- check that
+              model's own license before using it.
+            </div>
+          </div>
+        </aside>
+      </div>
+    </section>
+
+    <!-- ---------- FINE-TUNE PANEL ---------- -->
+    <section class="panel" id="panel-finetune">
+      <header class="panel-header">
+        <h1>Fine-tune training</h1>
+        <p>Trains your model on every Q&amp;A pair, then saves a new model folder.</p>
+      </header>
+
+      <div class="finetune-columns">
+        <div class="finetune-col" id="ftCol1">
+          <div class="active-banner" id="ftActiveBanner">
+            <span class="dot" id="ftActiveDot"></span>
+            <span>Active model for fine-tuning: <strong id="ftActiveModelText">None selected</strong></span>
+          </div>
+
+          <div class="card" id="ftModelCard">
+            <label class="field-label">Base model folder path</label>
+            <div class="path-row">
+              <input type="text" id="ftModelPathInput" placeholder="/Users/you/models/tinyllama-1.1b" />
+              <button class="btn" id="browseFtModelBtn">Browse</button>
+              <button class="btn primary" id="selectFtModelBtn">Use this model</button>
+            </div>
+            <div class="hint" id="ftModelHint"></div>
+          </div>
+
+          <div class="card" id="ftDatasetCard">
+            <label class="field-label">Dataset folder path</label>
+            <div class="path-row">
+              <input type="text" id="ftDatasetPathInput" placeholder="/Users/you/data/my-qa" />
+              <button class="btn" id="browseFtDatasetBtn">Browse</button>
+              <button class="btn primary" id="selectFtDatasetBtn">Use this dataset</button>
+            </div>
+            <div class="hint" id="ftDatasetHint"></div>
+          </div>
+        </div>
+
+        <div class="resizer" id="ftResizer1"></div>
+
+        <div class="finetune-col-right-group" id="ftColsRight">
+          <div class="finetune-col" id="ftCol2">
+            <div class="card" id="ftParamsCard">
+              <div class="grid-2">
+                <div>
+                  <label class="field-label">Epochs</label>
+                  <input type="number" id="ftEpochs" value="3" min="1" />
+                </div>
+                <div>
+                  <label class="field-label">Learning rate</label>
+                  <input type="number" id="ftLr" value="0.0002" step="0.0001" />
+                </div>
+                <div>
+                  <label class="field-label">Batch size</label>
+                  <input type="number" id="ftBatch" value="2" min="1" />
+                </div>
+                <div>
+                  <label class="field-label">Max sequence length</label>
+                  <input type="number" id="ftMaxLen" value="256" min="16" />
+                </div>
+                <div>
+                  <label class="field-label">LoRA rank (r)</label>
+                  <input type="number" id="ftLoraR" value="8" min="1" />
+                </div>
+                <div>
+                  <label class="field-label">LoRA alpha</label>
+                  <input type="number" id="ftLoraAlpha" value="16" min="1" />
+                </div>
+                <div>
+                  <label class="field-label">Compute device</label>
+                  <select id="ftDevice">
+                    <option value="auto">Auto (GPU if available)</option>
+                    <option value="cpu">CPU only</option>
+                    <option value="gpu">GPU only</option>
+                  </select>
+                </div>
+              </div>
+
+              <label class="checkbox-row">
+                <input type="checkbox" id="ftFullFinetune" />
+                Full fine-tuning (train all parameters instead of LoRA adapters — slower, no LoRA settings used)
+              </label>
+
+              <button class="btn primary big" id="startFinetuneBtn">Start fine-tuning</button>
+            </div>
+          </div>
+
+          <div class="resizer" id="ftResizer2"></div>
+
+          <div class="finetune-col" id="ftCol3">
+            <div class="card" id="ftLogCard">
+              <label class="field-label">Training log</label>
+              <pre class="log-box" id="finetuneLog">Idle.</pre>
+            </div>
+
+            <div class="card hidden success-card" id="ftCompleteCard">
+              <label class="field-label">Training complete</label>
+              <p>Where should the trained model be saved?</p>
+              <div class="path-row">
+                <input type="text" id="ftSaveDestInput" placeholder="/Users/you/models/my-finetuned-model" />
+                <button class="btn primary" id="ftSaveHereBtn">Save here</button>
+              </div>
+              <button class="btn" id="ftReplaceBtn" style="margin-top:10px">Replace original model</button>
+              <div class="hint" id="ftFinalizeHint"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ---------- RAG PANEL ---------- -->
+    <section class="panel" id="panel-rag">
+      <header class="panel-header">
+        <h1>RAG training</h1>
+        <p>Embeds every Q&amp;A pair into a small vector index instead of changing the model's weights. The index is saved alongside the model you pick below, so Chat can find it automatically.</p>
+      </header>
+
+      <div class="finetune-columns">
+        <div class="finetune-col" id="ragCol1">
+          <div class="active-banner" id="ragActiveBanner">
+            <span class="dot" id="ragActiveDot"></span>
+            <span>Active model for RAG: <strong id="ragActiveModelText">None selected</strong></span>
+          </div>
+
+          <div class="card" id="ragModelCard">
+            <label class="field-label">Model folder path</label>
+            <div class="path-row">
+              <input type="text" id="ragModelPathInput" placeholder="/Users/you/models/tinyllama-1.1b" />
+              <button class="btn" id="browseRagModelBtn">Browse</button>
+              <button class="btn primary" id="selectRagModelBtn">Use this model</button>
+            </div>
+            <div class="hint" id="ragModelHint"></div>
+          </div>
+
+          <div class="card" id="ragDatasetCard">
+            <label class="field-label">Dataset folder path</label>
+            <div class="path-row">
+              <input type="text" id="ragDatasetPathInput" placeholder="/Users/you/data/my-qa" />
+              <button class="btn" id="browseRagDatasetBtn">Browse</button>
+              <button class="btn primary" id="selectRagDatasetBtn">Use this dataset</button>
+            </div>
+            <div class="hint" id="ragDatasetHint"></div>
+          </div>
+        </div>
+
+        <div class="resizer" id="ragResizer1"></div>
+
+        <div class="finetune-col-right-group" id="ragColsRight">
+          <div class="finetune-col" id="ragCol2">
+            <div class="card" id="ragParamsCard">
+              <div class="grid-2">
+                <div>
+                  <label class="field-label">Embedding model</label>
+                  <input type="text" id="ragEmbed" value="sentence-transformers/all-MiniLM-L6-v2" />
+                </div>
+                <div>
+                  <label class="field-label">Top-K retrieved pairs</label>
+                  <input type="number" id="ragTopK" value="3" min="1" />
+                </div>
+                <div>
+                  <label class="field-label">Compute device</label>
+                  <select id="ragDevice">
+                    <option value="auto">Auto (GPU if available)</option>
+                    <option value="cpu">CPU only</option>
+                    <option value="gpu">GPU only</option>
+                  </select>
+                </div>
+              </div>
+              <button class="btn primary big" id="startRagBtn">Build RAG index</button>
+            </div>
+          </div>
+
+          <div class="resizer" id="ragResizer2"></div>
+
+          <div class="finetune-col" id="ragCol3">
+            <div class="card" id="ragLogCard">
+              <label class="field-label">Indexing log</label>
+              <pre class="log-box" id="ragLog">Idle.</pre>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ---------- DATASET PANEL ---------- -->
+    <section class="panel" id="panel-dataset">
+      <header class="panel-header">
+        <h1>Add to your Q&amp;A dataset</h1>
+        <p>Save new pairs straight to a <code>.json</code>, <code>.jsonl</code>, or <code>.csv</code> file, each with <code>question</code> / <code>answer</code> fields.</p>
+      </header>
+
+      <div class="dataset-split">
+        <div class="card" id="datasetAddCard">
+          <label class="field-label">Browse to choose or create a Q&amp;A file (.json, .jsonl, or .csv)</label>
+          <div class="path-row">
+            <button class="btn primary" id="datasetBrowseBtn">Browse</button>
+          </div>
+          <div class="hint" id="datasetTargetFileHint">No file selected.</div>
+
+          <label class="field-label" style="margin-top:14px">Question</label>
+          <textarea id="datasetQuestion" rows="2" placeholder="What's your favorite programming language? Markdown, HTML, and LaTeX ($...$) all render below as you type."></textarea>
+          <div class="dataset-live-preview" id="datasetQuestionPreview"></div>
+
+          <label class="field-label" style="margin-top:14px">Answer</label>
+          <textarea id="datasetAnswer" rows="3" placeholder="Python, for how quickly I can go from idea to working code."></textarea>
+          <div class="dataset-live-preview" id="datasetAnswerPreview"></div>
+
+          <div class="path-row" id="datasetAddRow">
+            <button class="btn primary big" id="datasetAddBtn">Add Q&amp;A pair</button>
+            <button class="btn hidden" id="datasetCancelEditBtn">Cancel edit</button>
+          </div>
+          <div class="hint" id="datasetAddHint"></div>
+        </div>
+
+        <div class="resizer" id="datasetResizer"></div>
+
+        <aside class="dataset-preview-pane">
+          <div class="card" id="datasetPreviewCard">
+            <div class="chat-toolbar">
+              <label class="field-label" style="margin:0;flex:1">Preview</label>
+              <label for="datasetPreviewFontSize" class="chat-toolbar-label">Text size</label>
+              <select id="datasetPreviewFontSize" title="Preview text size (px)"></select>
+            </div>
+            <div id="datasetPreview">No file to preview.</div>
           </div>
         </aside>
       </div>

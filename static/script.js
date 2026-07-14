@@ -1,6 +1,4 @@
-// ---------------------------------------------------------------------------
-// script.js - all dashboard behaviour lives here (no build step, no framework)
-// ---------------------------------------------------------------------------
+// All of the dashboard's behaviour lives in this one file.
 
 const api = {
   get: (url) => fetch(url).then((r) => r.json()),
@@ -13,9 +11,7 @@ const api = {
 };
 
 // ---------------- Resizable panels ----------------
-// Drags a handle to live-update a CSS variable (which the layout's widths
-// are defined in terms of -- see --sidebar-width / --chat-sidebar-width in
-// style.css), then remembers the chosen size in localStorage.
+// Dragging a divider resizes the panels next to it, and remembers your choice.
 function makeHorizontalResizer({ handleId, cssVar, min, max, storageKey, fromRight }) {
   const handle = document.getElementById(handleId);
   if (!handle) return;
@@ -72,258 +68,52 @@ makeHorizontalResizer({
   fromRight: true,
 });
 
-// Resizable boxes (shared by panels AND the cards inside them)
-// A resizable box is any absolutely-positioned element with explicit
-// left/top/width/height. Dragging one of its 4 edges resizes a single
-// dimension; dragging one of its 4 corners resizes width and height at once
-// (diagonally). All handles sit fully inside the box's own border (see
-// .panel-resize-* in style.css) so they can never force a stray scrollbar.
-function attachResizeHandles(box, storageKey, constraints) {
-  const clamp = (v, min, max) => Math.min(max, Math.max(min, v));
-
-  ["n", "s", "e", "w", "ne", "nw", "se", "sw"].forEach((dir) => {
-    const handle = document.createElement("div");
-    handle.className = `panel-resize-handle panel-resize-${dir}`;
-    box.appendChild(handle);
-
-    let dragging = false;
-    let startX = 0;
-    let startY = 0;
-    let startRect = null;
-
-    handle.addEventListener("mousedown", (e) => {
-      dragging = true;
-      handle.classList.add("dragging");
-      startX = e.clientX;
-      startY = e.clientY;
-
-      // Snapshot whatever size is currently rendered (whether that came
-      // from the CSS default or a previous explicit resize) as explicit
-      // pixel values, so this drag's delta applies against a fixed baseline.
-      const parentRect = box.parentElement.getBoundingClientRect();
-      const boxRect = box.getBoundingClientRect();
-      startRect = {
-        left: boxRect.left - parentRect.left,
-        top: boxRect.top - parentRect.top,
-        width: boxRect.width,
-        height: boxRect.height,
-      };
-      box.style.left = `${startRect.left}px`;
-      box.style.top = `${startRect.top}px`;
-      box.style.width = `${startRect.width}px`;
-      box.style.height = `${startRect.height}px`;
-
-      document.body.style.userSelect = "none";
-      e.preventDefault();
-    });
-
-    window.addEventListener("mousemove", (e) => {
-      if (!dragging) return;
-      const dx = e.clientX - startX;
-      const dy = e.clientY - startY;
-      let { left, top, width, height } = startRect;
-
-      // Corner handles (e.g. "se") combine both axes -- checking each
-      // character independently lets one drag resize width and height
-      // together for a true diagonal resize.
-      if (dir.includes("e")) {
-        width = clamp(startRect.width + dx, constraints.minWidth, constraints.maxWidth);
-      } else if (dir.includes("w")) {
-        const right = startRect.left + startRect.width;
-        width = clamp(startRect.width - dx, constraints.minWidth, constraints.maxWidth);
-        left = right - width;
-      }
-
-      if (dir.includes("s")) {
-        height = clamp(startRect.height + dy, constraints.minHeight, constraints.maxHeight);
-      } else if (dir.includes("n")) {
-        const bottom = startRect.top + startRect.height;
-        height = clamp(startRect.height - dy, constraints.minHeight, constraints.maxHeight);
-        top = bottom - height;
-      }
-
-      box.style.left = `${left}px`;
-      box.style.top = `${top}px`;
-      box.style.width = `${width}px`;
-      box.style.height = `${height}px`;
-    });
-
-    window.addEventListener("mouseup", () => {
-      if (!dragging) return;
-      dragging = false;
-      handle.classList.remove("dragging");
-      document.body.style.userSelect = "";
-      localStorage.setItem(storageKey, JSON.stringify({
-        left: parseFloat(box.style.left),
-        top: parseFloat(box.style.top),
-        width: parseFloat(box.style.width),
-        height: parseFloat(box.style.height),
-      }));
-    });
-  });
-}
-
-// ---------------- Resizable panel boxes ----------------
-// Each of the four main panels (Dataset / Fine-Tune / RAG / Chat) is an
-// independently resizable box. Geometry is remembered per panel in
-// localStorage; a panel that's never been resized just keeps the CSS
-// default (100% width, 100% height -- i.e. it fills the available space).
-function makeResizablePanel(panel, storageKey, constraints) {
-  const stored = JSON.parse(localStorage.getItem(storageKey) || "null");
-  if (stored) {
-    panel.style.left = `${stored.left}px`;
-    panel.style.top = `${stored.top}px`;
-    panel.style.width = `${stored.width}px`;
-    panel.style.height = `${stored.height}px`;
-  }
-  attachResizeHandles(panel, storageKey, constraints);
-}
-
-const PANEL_RESIZE_CONSTRAINTS = { minWidth: 360, maxWidth: 2000, minHeight: 240, maxHeight: 2000 };
-["dataset", "finetune", "rag", "chat"].forEach((name) => {
-  makeResizablePanel(
-    document.getElementById(`panel-${name}`),
-    `myself.panelGeom.${name}`,
-    PANEL_RESIZE_CONSTRAINTS
-  );
+makeHorizontalResizer({
+  handleId: "datasetResizer",
+  cssVar: "--dataset-preview-width",
+  min: 220,
+  max: 640,
+  storageKey: "myself.datasetPreviewWidth",
+  fromRight: true,
 });
 
-// ---------------- Move handle (drag a whole box to a new spot) ----------------
-// Only added to inner boxes (see convertPanelInnerBoxes below), not panels.
-// Grabbing the .box-move-handle grip updates left/top only -- width/height
-// are left alone -- and the result is clamped so the box can't be dragged
-// entirely outside its panel where it'd be unreachable. Persists to the
-// same localStorage entry the resize handles use, so a box's position and
-// size always travel together.
-function attachMoveHandle(box, storageKey, positionClass) {
-  const handle = document.createElement("div");
-  handle.className = positionClass ? `box-move-handle ${positionClass}` : "box-move-handle";
-  handle.title = "Drag to move";
-  box.appendChild(handle);
+// Fine-Tune panel's 3 columns.
+makeHorizontalResizer({
+  handleId: "ftResizer1",
+  cssVar: "--ft-col1-width",
+  min: 240,
+  max: 700,
+  storageKey: "myself.ftCol1Width",
+  fromRight: false,
+});
 
-  let dragging = false;
-  let startX = 0;
-  let startY = 0;
-  let startLeft = 0;
-  let startTop = 0;
+makeHorizontalResizer({
+  handleId: "ftResizer2",
+  cssVar: "--ft-col2-width",
+  min: 240,
+  max: 700,
+  storageKey: "myself.ftCol2Width",
+  fromRight: false,
+});
 
-  handle.addEventListener("mousedown", (e) => {
-    dragging = true;
-    handle.classList.add("dragging");
-    startX = e.clientX;
-    startY = e.clientY;
+// RAG panel's 3 columns.
+makeHorizontalResizer({
+  handleId: "ragResizer1",
+  cssVar: "--rag-col1-width",
+  min: 240,
+  max: 700,
+  storageKey: "myself.ragCol1Width",
+  fromRight: false,
+});
 
-    const parentRect = box.parentElement.getBoundingClientRect();
-    const boxRect = box.getBoundingClientRect();
-    startLeft = boxRect.left - parentRect.left;
-    startTop = boxRect.top - parentRect.top;
-    box.style.left = `${startLeft}px`;
-    box.style.top = `${startTop}px`;
-
-    document.body.style.userSelect = "none";
-    e.preventDefault();
-  });
-
-  window.addEventListener("mousemove", (e) => {
-    if (!dragging) return;
-    const dx = e.clientX - startX;
-    const dy = e.clientY - startY;
-
-    const parentRect = box.parentElement.getBoundingClientRect();
-    const maxLeft = Math.max(0, parentRect.width - box.offsetWidth);
-    const maxTop = Math.max(0, parentRect.height - box.offsetHeight);
-
-    const left = Math.min(maxLeft, Math.max(0, startLeft + dx));
-    const top = Math.min(maxTop, Math.max(0, startTop + dy));
-
-    box.style.left = `${left}px`;
-    box.style.top = `${top}px`;
-  });
-
-  window.addEventListener("mouseup", () => {
-    if (!dragging) return;
-    dragging = false;
-    handle.classList.remove("dragging");
-    document.body.style.userSelect = "";
-    localStorage.setItem(storageKey, JSON.stringify({
-      left: parseFloat(box.style.left),
-      top: parseFloat(box.style.top),
-      width: parseFloat(box.style.width),
-      height: parseFloat(box.style.height),
-    }));
-  });
-}
-
-// ---------------- Resizable inner boxes (the cards inside each panel) ----------------
-// Same idea, one level deeper: every card marked .resizable-box (the
-// "Chatting with" banner, model-path cards, log boxes, etc.) becomes its own
-// independently resizable box, using the same 8-handle mechanism as a panel.
-// A box normally sits in the panel's ordinary vertical flow, so converting
-// it to an absolutely-positioned box first requires *measuring* the spot it
-// would have occupied -- that measurement only works while its panel is
-// actually visible (a display:none ancestor collapses everything inside it
-// to a zero-size rect), so each panel's boxes are converted lazily the
-// first time that panel is opened, not all at once on page load.
-const INNER_BOX_CONSTRAINTS = { minWidth: 220, maxWidth: 1600, minHeight: 50, maxHeight: 1200 };
-
-function convertPanelInnerBoxes(panel) {
-  const boxes = Array.from(panel.querySelectorAll(".resizable-box")).filter(
-    (box) => box.dataset.resizeReady !== "true"
-  );
-  if (boxes.length === 0) return;
-
-  // Pass 1: measure every box's natural flow geometry BEFORE converting any
-  // of them -- converting one early would shift where its still-in-flow
-  // siblings render, corrupting their measurements. Anything that starts
-  // hidden (the dataset preview card, the fine-tune "training complete"
-  // card) is temporarily revealed just for this measurement.
-  const geometries = boxes.map((box) => {
-    const storageKey = `myself.boxGeom.${box.id}`;
-    const stored = JSON.parse(localStorage.getItem(storageKey) || "null");
-    if (stored) return stored;
-
-    const wasHiddenByClass = box.classList.contains("hidden");
-    const previousInlineDisplay = box.style.display;
-    if (wasHiddenByClass) box.classList.remove("hidden");
-    if (previousInlineDisplay === "none") box.style.display = "block";
-
-    const parentRect = box.parentElement.getBoundingClientRect();
-    const rect = box.getBoundingClientRect();
-    const geometry = {
-      left: rect.left - parentRect.left,
-      top: rect.top - parentRect.top,
-      width: rect.width,
-      height: rect.height,
-    };
-
-    if (wasHiddenByClass) box.classList.add("hidden");
-    box.style.display = previousInlineDisplay;
-    return geometry;
-  });
-
-  // Pass 2: apply the frozen geometry now that every box's natural position
-  // has already been captured, so nothing visibly shifts.
-  boxes.forEach((box, i) => {
-    const parent = box.parentElement;
-    if (getComputedStyle(parent).position === "static") {
-      parent.style.position = "relative";
-    }
-
-    box.dataset.resizeReady = "true";
-    box.style.position = "absolute";
-    box.style.margin = "0";
-    box.style.left = `${geometries[i].left}px`;
-    box.style.top = `${geometries[i].top}px`;
-    box.style.width = `${geometries[i].width}px`;
-    box.style.height = `${geometries[i].height}px`;
-
-    attachResizeHandles(box, `myself.boxGeom.${box.id}`, INNER_BOX_CONSTRAINTS);
-    attachMoveHandle(box, `myself.boxGeom.${box.id}`);
-    attachMoveHandle(box, `myself.boxGeom.${box.id}`, "box-move-handle-bl");
-  });
-}
-
-document.querySelectorAll(".panel.active").forEach(convertPanelInnerBoxes);
+makeHorizontalResizer({
+  handleId: "ragResizer2",
+  cssVar: "--rag-col2-width",
+  min: 240,
+  max: 700,
+  storageKey: "myself.ragCol2Width",
+  fromRight: false,
+});
 
 // ---------------- Sidebar navigation ----------------
 document.querySelectorAll(".nav-item").forEach((btn) => {
@@ -333,7 +123,6 @@ document.querySelectorAll(".nav-item").forEach((btn) => {
     btn.classList.add("active");
     const panel = document.getElementById(`panel-${btn.dataset.panel}`);
     panel.classList.add("active");
-    convertPanelInnerBoxes(panel);
   });
 });
 
@@ -355,13 +144,18 @@ async function refreshStatus() {
 
   const datasetDot = document.getElementById("datasetDot");
   const datasetText = document.getElementById("datasetStatusText");
-  if (settings.dataset_path) {
+  if (settings.dataset_target_file) {
     datasetDot.classList.add("ok");
-    datasetText.textContent = settings.dataset_path.split("/").pop();
+    datasetText.textContent = settings.dataset_target_file.split("/").pop();
   } else {
     datasetDot.classList.remove("ok");
     datasetText.textContent = "No dataset";
   }
+  if (datasetTargetPath === null && settings.dataset_target_file) {
+    setDatasetTargetPath(settings.dataset_target_file);
+    await refreshDatasetPreview();
+  }
+  applyDatasetPreviewFontSize(settings.dataset_preview_font_size || 14);
 
   const chatModelDot = document.getElementById("chatModelDot");
   const chatModelText = document.getElementById("chatModelStatusText");
@@ -373,22 +167,16 @@ async function refreshStatus() {
     chatModelText.textContent = "No chat model";
   }
 
-  // ---- active-model banners: always reflect what's actually persisted
-  // (not whatever a path input currently shows), so it's obvious when a
-  // browsed-to model hasn't been applied yet with "Use this model".
   setActiveBanner("ftActiveDot", "ftActiveModelText", settings.finetune.model_path);
   setActiveBanner("ragActiveDot", "ragActiveModelText", settings.rag.model_path);
   setActiveBanner("chatActiveDot", "chatActiveModelText", settings.chat_model_path);
 
-  // pre-fill path inputs and hyper-parameter fields
-  if (settings.dataset_path) document.getElementById("datasetPathInput").value = settings.dataset_path;
   if (settings.finetune.model_path) document.getElementById("ftModelPathInput").value = settings.finetune.model_path;
   if (settings.rag.model_path) document.getElementById("ragModelPathInput").value = settings.rag.model_path;
   if (settings.chat_model_path) document.getElementById("chatModelPathInput").value = settings.chat_model_path;
 
-  // dataset per training panel, falling back to the general Dataset tab's pick
-  const ftDataset = settings.finetune.dataset_path || settings.dataset_path;
-  const ragDataset = settings.rag.dataset_path || settings.dataset_path;
+  const ftDataset = settings.finetune.dataset_path;
+  const ragDataset = settings.rag.dataset_path;
   if (ftDataset) document.getElementById("ftDatasetPathInput").value = ftDataset;
   if (ragDataset) document.getElementById("ragDatasetPathInput").value = ragDataset;
 
@@ -408,24 +196,35 @@ async function refreshStatus() {
   document.getElementById("chatDevice").value = settings.chat_device || "auto";
   document.getElementById("chatHistoryTurns").value = settings.chat_history_turns ?? 6;
   document.getElementById("chatMaxTokens").value = settings.chat_max_new_tokens ?? 400;
+  audioModeEnabled = settings.chat_audio_mode ?? true;
+  document.getElementById("chatAudioMode").checked = audioModeEnabled;
+  document.getElementById("chatSttLanguage").value = settings.chat_stt_language || "en";
+  document.getElementById("chatTtsLanguage").value = settings.chat_tts_language || "en";
+  document.getElementById("chatSttModel").value = settings.chat_stt_model_size || "base";
+  document.getElementById("chatTtsEngine").value = settings.chat_tts_engine || "auto";
+  document.getElementById("chatTranslateModel").value = settings.chat_translate_model || "";
+  applyChatFontSize(settings.chat_font_size || 15);
+
+  const totalThreads = settings.total_threads || 1;
+  const physicalCores = settings.physical_cores || totalThreads;
+  populateCpuThreadsSelect(totalThreads, physicalCores);
+  document.getElementById("cpuThreads").value = settings.cpu_threads ?? "auto";
+  document.getElementById("cpuThreadsHint").textContent =
+    `${totalThreads} thread${totalThreads === 1 ? "" : "s"} available on this machine.`;
 }
 
 // ---------------- Native OS folder picker ----------------
-// Opens the real file manager dialog on the machine running the server
-// (the dashboard only ever runs locally, so this is always the same machine
-// the browser is on) instead of an in-page folder listing.
 function wireBrowseButton(browseBtnId, inputId) {
   document.getElementById(browseBtnId).addEventListener("click", async () => {
     const inputEl = document.getElementById(inputId);
     const res = await api.get(`/api/fs/pick_folder?path=${encodeURIComponent(inputEl.value || "")}`);
-    if (res.path) inputEl.value = res.path;
+    if (res.path) {
+      inputEl.value = res.path;
+      inputEl.dispatchEvent(new Event("change")); // so fields that save-on-change pick it up right away
+    }
   });
 }
 
-wireBrowseButton("browseDatasetBtn", "datasetPathInput");
-
-// A dataset folder can hold Q&A files and/or raw .txt/.md files -- describe
-// whatever combination was actually found (see data_manager.dataset_summary).
 function formatDatasetSummary(res) {
   const parts = [];
   if (res.count) parts.push(`${res.count} Q&A pair${res.count === 1 ? "" : "s"}`);
@@ -433,15 +232,7 @@ function formatDatasetSummary(res) {
   return parts.length ? `Loaded ${parts.join(" and ")}.` : "No Q&A pairs or text found in this folder.";
 }
 
-function renderDatasetPreview(res) {
-  const qaBlocks = (res.preview || []).map((p) => `Q: ${p.question}\nA: ${p.answer}`);
-  const textBlocks = (res.text_preview || []).map((t) => `[text chunk] ${t}`);
-  return qaBlocks.concat(textBlocks).join("\n\n");
-}
-
-// Generic "pick a folder, POST it, show a hint" wiring
-// Used by the Fine-Tune, RAG, and Chat panels, each of which picks its own
-// model and dataset instead of relying on one global setting.
+// Shared by the Fine-Tune, RAG, and Chat panels: pick a folder, save it, show a message.
 function wirePathSelect({ inputId, browseBtnId, selectBtnId, hintId, endpoint, onSuccess }) {
   wireBrowseButton(browseBtnId, inputId);
 
@@ -503,120 +294,228 @@ wirePathSelect({
   hintId: "chatModelHint",
   endpoint: "/api/chat/select_model",
   onSuccess: (res) => {
-    // Switching to a different chat model invalidates the running
-    // conversation history (it was built around whatever model answered
-    // those turns), so start fresh rather than silently feeding old context
-    // to a new model.
-    clearChat();
+    clearChat(); // switching models starts a fresh conversation
     return res.rag_detected
       ? `Model set: ${res.model_path} — RAG index found, will use retrieval.`
       : `Model set: ${res.model_path} — no RAG index found, will generate directly.`;
   },
 });
 
-// Dataset selection
-document.getElementById("selectDatasetBtn").addEventListener("click", async () => {
-  const path = document.getElementById("datasetPathInput").value.trim();
-  const hint = document.getElementById("datasetHint");
-  hint.textContent = "Checking...";
-  hint.className = "hint";
-  const res = await api.post("/api/dataset/select", { path });
+// Dataset: which Q&A file is currently selected, and which pair (if any) is being edited.
+let datasetTargetPath = null;
+let datasetEditingIndex = null;
+
+function setDatasetTargetPath(path) {
+  datasetTargetPath = path || null;
+  document.getElementById("datasetTargetFileHint").textContent =
+    datasetTargetPath ? `Target file: ${datasetTargetPath}` : "No file selected.";
+}
+
+function renderDatasetFilePreview(res) {
+  const preview = document.getElementById("datasetPreview");
+  preview.innerHTML = "";
+  if (!datasetTargetPath) {
+    preview.textContent = "No file to preview.";
+  } else if (!res.count) {
+    preview.textContent = "No Q&A pairs in this file yet.";
+  } else {
+    res.preview.forEach((pair, index) => {
+      const item = document.createElement("div");
+      item.className = "dataset-preview-item";
+      if (index === datasetEditingIndex) item.classList.add("editing");
+
+      const content = document.createElement("div");
+      renderFormattedContent(content, `**Q:** ${pair.question}\n\n**A:** ${pair.answer}`);
+      item.appendChild(content);
+
+      const actions = document.createElement("div");
+      actions.className = "dataset-preview-item-actions";
+
+      const editBtn = document.createElement("button");
+      editBtn.className = "btn";
+      editBtn.textContent = "Edit";
+      editBtn.addEventListener("click", () => enterDatasetEditMode(index, pair));
+      actions.appendChild(editBtn);
+
+      const deleteBtn = document.createElement("button");
+      deleteBtn.className = "btn danger";
+      deleteBtn.textContent = "Delete";
+      deleteBtn.addEventListener("click", () => deleteDatasetPair(index));
+      actions.appendChild(deleteBtn);
+
+      item.appendChild(actions);
+      preview.appendChild(item);
+    });
+  }
+}
+
+function enterDatasetEditMode(index, pair) {
+  datasetEditingIndex = index;
+
+  const questionEl = document.getElementById("datasetQuestion");
+  const answerEl = document.getElementById("datasetAnswer");
+  questionEl.value = pair.question;
+  answerEl.value = pair.answer;
+  updateDatasetQuestionPreview();
+  updateDatasetAnswerPreview();
+  questionEl.focus();
+
+  document.getElementById("datasetAddBtn").textContent = "Save changes";
+  document.getElementById("datasetCancelEditBtn").classList.remove("hidden");
+  document.getElementById("datasetAddHint").textContent = "";
+  refreshDatasetPreview();
+}
+
+function exitDatasetEditMode() {
+  datasetEditingIndex = null;
+  document.getElementById("datasetAddBtn").textContent = "Add Q&A pair";
+  document.getElementById("datasetCancelEditBtn").classList.add("hidden");
+}
+
+document.getElementById("datasetCancelEditBtn").addEventListener("click", () => {
+  exitDatasetEditMode();
+  const questionEl = document.getElementById("datasetQuestion");
+  const answerEl = document.getElementById("datasetAnswer");
+  questionEl.value = "";
+  answerEl.value = "";
+  updateDatasetQuestionPreview();
+  updateDatasetAnswerPreview();
+  document.getElementById("datasetAddHint").textContent = "";
+  refreshDatasetPreview();
+});
+
+async function deleteDatasetPair(index) {
+  if (!confirm("Delete this Q&A pair? This can't be undone.")) return;
+
+  const hint = document.getElementById("datasetAddHint");
+  const res = await api.post("/api/dataset/delete", { target_path: datasetTargetPath, index });
   if (res.ok) {
-    hint.textContent = formatDatasetSummary(res);
+    hint.textContent = `Deleted. File now has ${res.count} pair${res.count === 1 ? "" : "s"}.`;
     hint.className = "hint success";
-    const previewCard = document.getElementById("datasetPreviewCard");
-    const preview = document.getElementById("datasetPreview");
-    previewCard.style.display = "block";
-    preview.textContent = renderDatasetPreview(res);
-    await loadDatasetFileOptions();
+    if (datasetEditingIndex !== null) {
+      exitDatasetEditMode();
+      document.getElementById("datasetQuestion").value = "";
+      document.getElementById("datasetAnswer").value = "";
+      updateDatasetQuestionPreview();
+      updateDatasetAnswerPreview();
+    }
+    renderDatasetFilePreview(res);
   } else {
     hint.textContent = res.error;
     hint.className = "hint error";
   }
-  refreshStatus();
-});
+}
 
-// Dataset: paste-to-build Q&A pairs
-async function loadDatasetFileOptions() {
-  const data = await api.get("/api/dataset/files");
-  const select = document.getElementById("datasetTargetFile");
-  select.innerHTML = "";
+async function refreshDatasetPreview() {
+  const res = datasetTargetPath
+    ? await api.get(`/api/dataset/preview?path=${encodeURIComponent(datasetTargetPath)}`)
+    : { count: 0, preview: [] };
+  renderDatasetFilePreview(res);
+}
 
-  data.files.forEach((name) => {
-    const opt = document.createElement("option");
-    opt.value = name;
-    opt.textContent = name;
-    select.appendChild(opt);
-  });
+// Shows a live formatted preview under a Question/Answer box as you type.
+function wireDatasetLivePreview(textareaId, previewId) {
+  const textarea = document.getElementById(textareaId);
+  const preview = document.getElementById(previewId);
 
-  const newOpt = document.createElement("option");
-  newOpt.value = "__new__";
-  newOpt.textContent = "+ New file...";
-  select.appendChild(newOpt);
+  const update = () => {
+    if (textarea.value.trim()) {
+      renderFormattedContent(preview, textarea.value);
+    } else {
+      preview.innerHTML = "";
+    }
+  };
 
-  if (data.active_file && data.files.includes(data.active_file)) {
-    select.value = data.active_file;
-  } else if (data.files.length) {
-    select.value = data.files[0];
-  } else {
-    select.value = "__new__";
+  textarea.addEventListener("input", update);
+  return update;
+}
+
+const updateDatasetQuestionPreview = wireDatasetLivePreview("datasetQuestion", "datasetQuestionPreview");
+const updateDatasetAnswerPreview = wireDatasetLivePreview("datasetAnswer", "datasetAnswerPreview");
+
+document.getElementById("datasetBrowseBtn").addEventListener("click", async () => {
+  const res = await api.get(`/api/fs/pick_save_file?path=${encodeURIComponent(datasetTargetPath || "")}`);
+  if (res.path) {
+    setDatasetTargetPath(res.path);
+    await refreshDatasetPreview();
+    refreshStatus();
   }
-  toggleNewFilenameInput();
-}
-
-function toggleNewFilenameInput() {
-  const select = document.getElementById("datasetTargetFile");
-  const newInput = document.getElementById("datasetNewFilename");
-  newInput.classList.toggle("hidden", select.value !== "__new__");
-}
-
-document.getElementById("datasetTargetFile").addEventListener("change", toggleNewFilenameInput);
+});
 
 document.getElementById("datasetAddBtn").addEventListener("click", async () => {
   const questionEl = document.getElementById("datasetQuestion");
   const answerEl = document.getElementById("datasetAnswer");
-  const select = document.getElementById("datasetTargetFile");
   const hint = document.getElementById("datasetAddHint");
 
   const question = questionEl.value.trim();
   const answer = answerEl.value.trim();
-  const isNew = select.value === "__new__";
-  const targetFile = isNew ? document.getElementById("datasetNewFilename").value.trim() : select.value;
 
   if (!question || !answer) {
     hint.textContent = "Both question and answer are required.";
     hint.className = "hint error";
     return;
   }
-  if (!targetFile) {
-    hint.textContent = "Enter a filename for the new dataset file.";
+  if (!datasetTargetPath) {
+    hint.textContent = "Choose a file first (Browse).";
     hint.className = "hint error";
     return;
   }
 
-  hint.textContent = "Saving...";
+  const editing = datasetEditingIndex !== null;
+  hint.textContent = editing ? "Saving changes..." : "Saving...";
   hint.className = "hint";
-  const res = await api.post("/api/dataset/add", {
-    question,
-    answer,
-    target_file: targetFile,
-    create_new: isNew,
-  });
+  const res = editing
+    ? await api.post("/api/dataset/update", {
+        question,
+        answer,
+        target_path: datasetTargetPath,
+        index: datasetEditingIndex,
+      })
+    : await api.post("/api/dataset/add", {
+        question,
+        answer,
+        target_path: datasetTargetPath,
+      });
 
   if (res.ok) {
-    hint.textContent = `Saved to ${res.saved_to}. Dataset now has ${res.count} pairs.`;
+    hint.textContent = editing
+      ? `Changes saved. File now has ${res.count} pair${res.count === 1 ? "" : "s"}.`
+      : `Saved to ${res.target_path}. File now has ${res.count} pair${res.count === 1 ? "" : "s"}.`;
     hint.className = "hint success";
+    if (editing) exitDatasetEditMode();
     questionEl.value = "";
     answerEl.value = "";
-    const previewCard = document.getElementById("datasetPreviewCard");
-    const preview = document.getElementById("datasetPreview");
-    previewCard.style.display = "block";
-    preview.textContent = renderDatasetPreview(res);
-    await loadDatasetFileOptions();
+    updateDatasetQuestionPreview();
+    updateDatasetAnswerPreview();
+    renderDatasetFilePreview(res);
   } else {
     hint.textContent = res.error;
     hint.className = "hint error";
   }
+});
+
+// Dataset: Preview text size.
+const DATASET_PREVIEW_FONT_SIZE_MIN = 1;
+const DATASET_PREVIEW_FONT_SIZE_MAX = 40;
+
+function applyDatasetPreviewFontSize(size) {
+  document.getElementById("datasetPreviewFontSize").value = size;
+  document.getElementById("datasetPreview").style.fontSize = `${size}px`;
+}
+
+const datasetPreviewFontSizeSelect = document.getElementById("datasetPreviewFontSize");
+
+for (let size = DATASET_PREVIEW_FONT_SIZE_MIN; size <= DATASET_PREVIEW_FONT_SIZE_MAX; size++) {
+  const option = document.createElement("option");
+  option.value = size;
+  option.textContent = size;
+  datasetPreviewFontSizeSelect.appendChild(option);
+}
+
+datasetPreviewFontSizeSelect.addEventListener("change", async (e) => {
+  const size = Number(e.target.value);
+  applyDatasetPreviewFontSize(size);
+  await api.post("/api/dataset/preview_font_size", { size });
 });
 
 // Fine-tune / RAG training
@@ -751,16 +650,115 @@ document.getElementById("chatMaxTokens").addEventListener("change", (e) => {
   saveChatMemorySetting("max_new_tokens", Number(e.target.value));
 });
 
-// Chat
-// Completed {question, answer} turns for the current browser session, sent
-// with every request so the model can see prior turns (see model_manager.
-// generate's `history` param) -- this is what lets "continue that" or
-// "write the rest" work instead of each message starting from scratch.
-let chatHistory = [];
+// Chat: voice languages -- the language you speak and the language replies
+// are read back in can be set independently.
+const STT_MODEL_SIZE_LABELS = {
+  tiny: "Tiny (~75MB, fastest, least accurate)",
+  base: "Base (~145MB, fast, balanced -- default)",
+  small: "Small (~500MB, slower, more accurate)",
+  medium: "Medium (~1.5GB, slow, most accurate)",
+  "large-v3": "Large-v3 (~3GB, slowest, best accuracy)",
+};
 
-function clearChat() {
-  chatHistory = [];
+async function loadSpeechLanguages() {
+  const [langData, voiceData] = await Promise.all([
+    api.get("/api/speech/languages"),
+    api.get("/api/speech/voice_options"),
+  ]);
+
+  ["chatSttLanguage", "chatTtsLanguage"].forEach((id) => {
+    const select = document.getElementById(id);
+    select.innerHTML = "";
+    langData.languages.forEach(({ code, name }) => {
+      const opt = document.createElement("option");
+      opt.value = code;
+      opt.textContent = name;
+      select.appendChild(opt);
+    });
+  });
+
+  const sttModelSelect = document.getElementById("chatSttModel");
+  sttModelSelect.innerHTML = "";
+  voiceData.stt_model_sizes.forEach((size) => {
+    const opt = document.createElement("option");
+    opt.value = size;
+    opt.textContent = STT_MODEL_SIZE_LABELS[size] || size;
+    sttModelSelect.appendChild(opt);
+  });
+}
+
+function wireChatLanguageSelect(selectId, endpoint, label) {
+  document.getElementById(selectId).addEventListener("change", async () => {
+    const select = document.getElementById(selectId);
+    const hint = document.getElementById("chatLanguageHint");
+    hint.textContent = "Saving...";
+    hint.className = "hint";
+    const res = await api.post(endpoint, { language: select.value });
+    if (res.ok) {
+      hint.textContent = `${label}: ${select.selectedOptions[0].textContent}.`;
+      hint.className = "hint success";
+    } else {
+      hint.textContent = res.error;
+      hint.className = "hint error";
+    }
+  });
+}
+
+wireChatLanguageSelect("chatSttLanguage", "/api/chat/stt_language", "Speak in");
+wireChatLanguageSelect("chatTtsLanguage", "/api/chat/tts_language", "Hear replies in");
+
+// Chat: speech-to-text accuracy, voice engine, translation model override
+document.getElementById("chatSttModel").addEventListener("change", async () => {
+  const select = document.getElementById("chatSttModel");
+  const hint = document.getElementById("chatVoiceHint");
+  hint.textContent = "Saving...";
+  hint.className = "hint";
+  const res = await api.post("/api/chat/stt_model", { model_size: select.value });
+  hint.textContent = res.ok ? `Speech-to-text model: ${select.selectedOptions[0].textContent}.` : res.error;
+  hint.className = res.ok ? "hint success" : "hint error";
+});
+
+document.getElementById("chatTtsEngine").addEventListener("change", async () => {
+  const select = document.getElementById("chatTtsEngine");
+  const hint = document.getElementById("chatVoiceHint");
+  hint.textContent = "Saving...";
+  hint.className = "hint";
+  const res = await api.post("/api/chat/tts_engine", { engine: select.value });
+  hint.textContent = res.ok ? `Text-to-speech engine: ${select.selectedOptions[0].textContent}.` : res.error;
+  hint.className = res.ok ? "hint success" : "hint error";
+});
+
+wireBrowseButton("browseChatTranslateModelBtn", "chatTranslateModel");
+
+document.getElementById("chatTranslateModel").addEventListener("change", async (e) => {
+  const hint = document.getElementById("chatTranslateModelHint");
+  hint.textContent = "Saving...";
+  hint.className = "hint";
+  const res = await api.post("/api/chat/translate_model", { model: e.target.value.trim() });
+  hint.textContent = res.ok
+    ? (res.model ? `Translation model: ${res.model}.` : "Using default per-language translation model.")
+    : res.error;
+  hint.className = res.ok ? "hint success" : "hint error";
+});
+
+// Chat: clears the saved conversation, on the server and on screen.
+async function clearChat() {
   document.getElementById("chatLog").innerHTML = "";
+  await api.post("/api/chat/clear", {});
+}
+
+// On page load, show whatever conversation was saved from before.
+async function loadChatHistory() {
+  const data = await api.get("/api/chat/history");
+  (data.history || []).forEach((turn) => {
+    appendBubble(turn.question_display, "user");
+    const bubble = appendBubble("", "bot");
+    renderBotContent(bubble, turn.answer_display);
+    addCopyButton(bubble, turn.answer_display);
+    addSpeakButton(bubble, turn.answer_display); // don't auto-play old messages
+  });
+  const chatLog = document.getElementById("chatLog");
+  chatLog.scrollTop = chatLog.scrollHeight;
 }
 
 function appendBubble(text, who) {
@@ -776,15 +774,18 @@ function appendBubble(text, who) {
   return bubble;
 }
 
-// Bot replies may contain Markdown, raw HTML, and/or LaTeX ($...$, $$...$$).
-// Parse Markdown, sanitize the resulting HTML (the model's output is
-// untrusted input), then let KaTeX's auto-render find and typeset any math.
-function renderBotContent(bubble, text) {
-  const textDiv = bubble.querySelector(".bubble-text");
-  textDiv.innerHTML = DOMPurify.sanitize(marked.parse(text));
+// Turns Markdown/HTML/LaTeX text into safely-formatted content on the page.
+// Used for chat replies, the Dataset preview, and its live Question/Answer previews.
+function renderFormattedContent(el, text) {
+  el.classList.add("rendered-content");
+  el.innerHTML = DOMPurify.sanitize(marked.parse(text));
   if (window.renderMathInElement) {
-    renderMathInElement(textDiv, { throwOnError: false });
+    renderMathInElement(el, { throwOnError: false });
   }
+}
+
+function renderBotContent(bubble, text) {
+  renderFormattedContent(bubble.querySelector(".bubble-text"), text);
 }
 
 function addCopyButton(bubble, text) {
@@ -807,41 +808,188 @@ function autoGrowChatInput() {
   input.style.height = `${Math.min(input.scrollHeight, 160)}px`;
 }
 
-// Only one question can be in flight at a time -- the backend also refuses
-// a second /api/chat while one is running, but guarding here means the
-// Send button can never even fire the extra request in the first place.
+// Only one question can be asked at a time.
 let chatBusy = false;
 
 function setChatBusy(busy) {
   chatBusy = busy;
   document.getElementById("chatSendBtn").disabled = busy;
   document.getElementById("chatStopBtn").disabled = !busy;
+  document.getElementById("chatMicBtn").disabled = busy;
 }
 
-async function sendChat() {
-  if (chatBusy) return;
-  const input = document.getElementById("chatInput");
-  const question = input.value.trim();
-  if (!question) return;
-  appendBubble(question, "user");
-  input.value = "";
-  autoGrowChatInput();
+// Every reply bubble has its own Play/Pause button. Only one reply plays at
+// a time -- starting a new one pauses whatever else was playing.
+let currentAudio = null;
+let currentSpeechController = null;
 
+// Used by the Stop button: stops any reply currently playing or being generated.
+function stopSpeech() {
+  if (currentAudio) {
+    currentAudio.pause();
+    currentAudio.currentTime = 0;
+  }
+  if (currentSpeechController) {
+    currentSpeechController.abort();
+    currentSpeechController = null;
+  }
+}
+
+function addSpeakButton(bubble, text) {
+  const btn = document.createElement("button");
+  btn.className = "speak-btn";
+  btn.textContent = "▶ Play";
+  let audio = null;
+
+  async function play() {
+    if (currentAudio && currentAudio !== audio) currentAudio.pause();
+    if (currentSpeechController) currentSpeechController.abort();
+
+    if (audio) {
+      currentAudio = audio;
+      await audio.play().catch(() => {});
+      return;
+    }
+
+    const language = document.getElementById("chatTtsLanguage").value || "en";
+    const controller = new AbortController();
+    currentSpeechController = controller;
+    btn.disabled = true;
+    btn.textContent = "Generating speech..."; // can take a while on slower computers
+    try {
+      const res = await fetch("/api/speech/speak", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text, language }),
+        signal: controller.signal,
+      });
+      const contentType = res.headers.get("content-type") || "";
+      if (!contentType.includes("audio")) {
+        const err = await res.json();
+        throw new Error(err.error || "Speech synthesis failed.");
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      audio = new Audio(url);
+      audio.addEventListener("play", () => {
+        currentAudio = audio;
+        btn.textContent = "⏸ Pause";
+      });
+      audio.addEventListener("pause", () => {
+        btn.textContent = "▶ Play";
+      });
+      audio.addEventListener("ended", () => {
+        btn.textContent = "▶ Play";
+        audio.currentTime = 0; // so the next Play replays from the start
+      });
+      btn.disabled = false;
+      await audio.play().catch(() => {}); // browser may block autoplay -- clicking Play still works
+    } catch (err) {
+      if (err.name !== "AbortError") console.error("TTS error:", err); // AbortError just means it was cancelled, not a real failure
+      btn.textContent = "▶ Play";
+    } finally {
+      btn.disabled = false;
+      if (currentSpeechController === controller) currentSpeechController = null;
+    }
+  }
+
+  btn.addEventListener("click", () => {
+    if (audio && !audio.paused) {
+      audio.pause();
+    } else {
+      play();
+    }
+  });
+
+  bubble.appendChild(btn);
+  return { play };
+}
+
+// Chat: Audio mode -- On auto-plays every reply; Off waits for the Play button.
+let audioModeEnabled = true;
+
+document.getElementById("chatAudioMode").addEventListener("change", async (e) => {
+  audioModeEnabled = e.target.checked;
+  await api.post("/api/chat/audio_mode", { enabled: audioModeEnabled });
+});
+
+// Chat: text size.
+const CHAT_FONT_SIZE_MIN = 1;
+const CHAT_FONT_SIZE_MAX = 40;
+
+function applyChatFontSize(size) {
+  document.getElementById("chatFontSize").value = size;
+  document.getElementById("chatLog").style.fontSize = `${size}px`;
+}
+
+const chatFontSizeSelect = document.getElementById("chatFontSize");
+
+for (let size = CHAT_FONT_SIZE_MIN; size <= CHAT_FONT_SIZE_MAX; size++) {
+  const option = document.createElement("option");
+  option.value = size;
+  option.textContent = size;
+  chatFontSizeSelect.appendChild(option);
+}
+
+chatFontSizeSelect.addEventListener("change", async (e) => {
+  const size = Number(e.target.value);
+  applyChatFontSize(size);
+  await api.post("/api/chat/font_size", { size });
+});
+
+// Sidebar: lets you cap how many CPU threads the app uses.
+function populateCpuThreadsSelect(totalThreads, physicalCores) {
+  const select = document.getElementById("cpuThreads");
+  select.innerHTML = "";
+  const autoOption = document.createElement("option");
+  autoOption.value = "auto";
+  autoOption.textContent = `Auto (Default=${physicalCores})`;
+  select.appendChild(autoOption);
+  for (let n = 1; n <= totalThreads; n++) {
+    const option = document.createElement("option");
+    option.value = n;
+    option.textContent = n;
+    select.appendChild(option);
+  }
+}
+
+document.getElementById("cpuThreads").addEventListener("change", async (e) => {
+  const threads = e.target.value === "auto" ? null : Number(e.target.value);
+  await api.post("/api/system/cpu_threads", { threads });
+});
+
+// `question`/`questionDisplay` are only passed when sending a voice message;
+// a typed message is read straight from the input box instead.
+async function sendChat(question, questionDisplay) {
+  if (chatBusy) return;
+  const typed = question === undefined;
+  const input = document.getElementById("chatInput");
+  if (typed) {
+    question = input.value.trim();
+    if (!question) return;
+    input.value = "";
+    autoGrowChatInput();
+  }
+
+  const userBubble = appendBubble(questionDisplay || question, "user");
   const thinkingBubble = appendBubble("Thinking...", "bot");
   const chatLog = document.getElementById("chatLog");
 
   setChatBusy(true);
   try {
-    const res = await api.post("/api/chat", { question, history: chatHistory });
+    const res = await api.post("/api/chat", { question, question_display: questionDisplay || null });
     if (res.ok) {
-      renderBotContent(thinkingBubble, res.answer);
-      addCopyButton(thinkingBubble, res.answer);
-      chatHistory.push({ question, answer: res.answer });
+      if (typed) userBubble.querySelector(".bubble-text").textContent = res.question_display;
+      renderBotContent(thinkingBubble, res.answer_display);
+      addCopyButton(thinkingBubble, res.answer_display);
+      const speak = addSpeakButton(thinkingBubble, res.answer_display);
       if (res.stopped) {
         const note = document.createElement("span");
         note.className = "stopped-note";
         note.textContent = "Generation stopped early.";
         thinkingBubble.appendChild(note);
+      } else if (res.answer_display && audioModeEnabled) {
+        speak.play();
       }
     } else {
       thinkingBubble.querySelector(".bubble-text").textContent = `Error: ${res.error}`;
@@ -856,21 +1004,87 @@ async function stopChat() {
   const stopBtn = document.getElementById("chatStopBtn");
   stopBtn.disabled = true;
   stopBtn.textContent = "Stopping...";
+  stopSpeech();
   await api.post("/api/chat/stop", {});
   stopBtn.textContent = "Stop";
-  // Left disabled: setChatBusy(false) re-enables the pair once the in-flight
-  // /api/chat request actually returns with whatever it generated so far.
 }
 
-document.getElementById("chatSendBtn").addEventListener("click", sendChat);
+// Voice input: record audio, send it off to be transcribed, then send the result as a normal chat message.
+let mediaRecorder = null;
+let audioChunks = [];
+let isRecording = false;
+
+async function toggleMic() {
+  if (chatBusy) return;
+  const micBtn = document.getElementById("chatMicBtn");
+
+  if (isRecording) {
+    isRecording = false;
+    micBtn.classList.remove("recording");
+    mediaRecorder.stop();
+    return;
+  }
+
+  let stream;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  } catch (err) {
+    alert("Microphone access was denied or is unavailable.");
+    return;
+  }
+
+  audioChunks = [];
+  mediaRecorder = new MediaRecorder(stream);
+  mediaRecorder.ondataavailable = (e) => {
+    if (e.data.size > 0) audioChunks.push(e.data);
+  };
+  mediaRecorder.onstop = () => {
+    stream.getTracks().forEach((t) => t.stop());
+    handleRecordedAudio();
+  };
+  mediaRecorder.start();
+  isRecording = true;
+  micBtn.classList.add("recording");
+  micBtn.textContent = "⏹";
+  micBtn.title = "Stop recording";
+}
+
+async function handleRecordedAudio() {
+  const micBtn = document.getElementById("chatMicBtn");
+  const language = document.getElementById("chatSttLanguage").value || "en";
+  const blob = new Blob(audioChunks, { type: "audio/webm" });
+
+  micBtn.classList.remove("recording");
+  micBtn.disabled = true;
+  micBtn.textContent = "...";
+  micBtn.title = "Transcribing...";
+  try {
+    const formData = new FormData();
+    formData.append("audio", blob, "speech.webm");
+    formData.append("language", language);
+    const res = await fetch("/api/speech/transcribe", { method: "POST", body: formData }).then((r) => r.json());
+    if (res.ok && res.text_en) {
+      sendChat(res.text_en, res.text_display);
+    } else if (res.ok) {
+      alert("Didn't catch any speech -- please try again.");
+    } else {
+      alert("Transcription failed: " + res.error);
+    }
+  } finally {
+    micBtn.disabled = false;
+    micBtn.textContent = "🎤 Speak";
+    micBtn.title = "Speak your question";
+  }
+}
+
+document.getElementById("chatSendBtn").addEventListener("click", () => sendChat());
 document.getElementById("chatStopBtn").addEventListener("click", stopChat);
+document.getElementById("chatMicBtn").addEventListener("click", toggleMic);
 document.getElementById("clearChatBtn").addEventListener("click", clearChat);
 
 document.getElementById("chatInput").addEventListener("input", autoGrowChatInput);
 document.getElementById("chatInput").addEventListener("keydown", (e) => {
-  // Plain Enter sends; Shift+Enter (or Ctrl/Cmd+Enter) inserts a real
-  // newline, which a single-line <input> could never do -- that's why this
-  // is a <textarea> now.
+  // Enter sends the message; Shift+Enter adds a new line instead.
   if (e.key === "Enter" && !e.shiftKey) {
     e.preventDefault();
     sendChat();
@@ -878,5 +1092,5 @@ document.getElementById("chatInput").addEventListener("keydown", (e) => {
 });
 
 // Init
-refreshStatus();
-loadDatasetFileOptions();
+loadSpeechLanguages().then(refreshStatus);
+loadChatHistory();

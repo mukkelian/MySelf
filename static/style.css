@@ -14,12 +14,14 @@
   --font-body: 'Inter', system-ui, sans-serif;
   --font-mono: 'JetBrains Mono', 'Courier New', monospace;
 
-  /* Panel sizes the user can drag to resize (see .resizer in script.js) --
-     changing these here only sets the *default* on first load; once the
-     user drags a handle, the chosen size is saved to localStorage and wins. */
+  /* Default panel sizes -- dragging a divider overrides these with a remembered choice. */
   --sidebar-width: 230px;
   --chat-sidebar-width: 320px;
-  --corner-size: 20px; /* size of the diagonal-resize corner handles on each panel box */
+  --dataset-preview-width: 380px;
+  --ft-col1-width: 340px;
+  --ft-col2-width: 340px;
+  --rag-col1-width: 340px;
+  --rag-col2-width: 340px;
 }
 
 * { box-sizing: border-box; }
@@ -141,11 +143,29 @@ body {
 
 .dot.ok { background: var(--accent); }
 
+.sidebar-threads {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-top: 4px;
+  border-top: 1px solid var(--border);
+}
+
+.sidebar-threads .field-label {
+  margin-bottom: 4px;
+}
+
+.sidebar-threads select {
+  width: 100%;
+}
+
+.sidebar-threads .hint {
+  margin-top: 2px;
+  font-size: 11px;
+}
+
 /* ================= RESIZE HANDLES ================= */
-/* Thin draggable dividers between panels. Each one is wired up in script.js
-   (makeHorizontalResizer) to a CSS variable -- dragging it live-updates that
-   variable, and the chosen size is saved to localStorage so it survives a
-   reload. See --sidebar-width / --chat-sidebar-width in the :root block. */
+/* Thin dividers you can drag to resize the panels next to them. */
 .resizer {
   flex: 0 0 auto;
   width: 10px;
@@ -178,16 +198,10 @@ body {
   height: 100vh;
   overflow: auto;
   padding: 16px;
-  position: relative; /* containing block the resizable panel boxes are positioned against */
+  position: relative;
 }
 
-/* Each panel (Dataset / Fine-Tune / RAG / Chat) is an independently
-   resizable box: it starts filling the ENTIRE available space (no default
-   gap), but dragging one of its edge/corner handles (added in script.js --
-   makeResizablePanel) switches it to an explicit pixel left/top/width/height,
-   which is then remembered per panel in localStorage. Shrinking a panel
-   reveals the .content background around it; content that no longer fits
-   scrolls inside the panel. */
+/* Each tab (Dataset / Fine-Tune / RAG / Chat) fills the whole screen area. */
 .panel {
   display: none;
   position: absolute;
@@ -204,141 +218,9 @@ body {
 
 .panel.active { display: block; }
 #panel-chat.active { display: flex; flex-direction: column; }
-
-/* Drag handles on a resizable panel box: 4 edges (single-axis resize) + 4
-   corners (diagonal resize -- both axes at once). Every handle sits fully
-   INSIDE the panel's own border (never poking outside it), so it can never
-   push .content's scrollable area past its visible box and force a stray
-   scrollbar -- that was the bug behind the unwanted bar on the right edge. */
-.panel-resize-handle {
-  position: absolute;
-  z-index: 3;
-  user-select: none;
-}
-
-.panel-resize-handle::after {
-  content: "";
-  position: absolute;
-  background: transparent;
-  border-radius: 2px;
-  transition: background 0.15s ease;
-}
-
-.panel-resize-handle:hover::after,
-.panel-resize-handle.dragging::after {
-  background: var(--accent);
-}
-
-/* Straight edges -- inset by --corner-size at both ends so they never
-   overlap the corner squares. */
-.panel-resize-e, .panel-resize-w {
-  top: var(--corner-size);
-  bottom: var(--corner-size);
-  width: 8px;
-  cursor: ew-resize;
-}
-
-.panel-resize-e { right: 0; }
-.panel-resize-w { left: 0; }
-
-.panel-resize-e::after, .panel-resize-w::after {
-  top: 0;
-  bottom: 0;
-  left: 3px;
-  width: 2px;
-}
-
-.panel-resize-n, .panel-resize-s {
-  left: var(--corner-size);
-  right: var(--corner-size);
-  height: 8px;
-  cursor: ns-resize;
-}
-
-.panel-resize-n { top: 0; }
-.panel-resize-s { bottom: 0; }
-
-.panel-resize-n::after, .panel-resize-s::after {
-  left: 0;
-  right: 0;
-  top: 3px;
-  height: 2px;
-}
-
-/* Corners -- small squares, diagonal drag resizes both width AND height at
-   once. Inset a few px from the literal geometric corner so the hotzone
-   isn't clipped by the panel's own border-radius curve, and given a always-
-   visible dot (not just on hover) since a bare corner is otherwise too easy
-   to miss -- unlike the edges, there's no long line to run your cursor into. */
-.panel-resize-ne, .panel-resize-nw, .panel-resize-se, .panel-resize-sw {
-  width: var(--corner-size);
-  height: var(--corner-size);
-  z-index: 4;
-}
-
-.panel-resize-ne { top: 3px; right: 3px; cursor: nesw-resize; }
-.panel-resize-nw { top: 3px; left: 3px; cursor: nwse-resize; }
-.panel-resize-se { bottom: 3px; right: 3px; cursor: nwse-resize; }
-.panel-resize-sw { bottom: 3px; left: 3px; cursor: nesw-resize; }
-
-.panel-resize-ne::after, .panel-resize-nw::after,
-.panel-resize-se::after, .panel-resize-sw::after {
-  top: 50%;
-  left: 50%;
-  width: 6px;
-  height: 6px;
-  margin: -3px 0 0 -3px;
-  background: var(--text-dim);
-  opacity: 0.55;
-  border-radius: 50%;
-}
-
-.panel-resize-ne:hover::after, .panel-resize-nw:hover::after,
-.panel-resize-se:hover::after, .panel-resize-sw:hover::after,
-.panel-resize-ne.dragging::after, .panel-resize-nw.dragging::after,
-.panel-resize-se.dragging::after, .panel-resize-sw.dragging::after {
-  background: var(--accent);
-  opacity: 1;
-}
-
-/* Move handle: grab a dot-grip to drag an inner box (.resizable-box) to a
-   new spot within its panel -- this only repositions it, width/height are
-   untouched. Each box gets two of these (top-right and bottom-left, either
-   one works) so there's always a grip within reach. Both sit inset from
-   their nearest resize corner (28-48px from that edge, clear of the
-   corner's 3-23px hotzone) so the two never fight for the same pixels.
-   Only added to inner boxes, not the panels themselves. */
-.box-move-handle {
-  position: absolute;
-  top: 4px;
-  right: 28px;
-  width: 20px;
-  height: 20px;
-  z-index: 5;
-  border-radius: 4px;
-  cursor: move;
-  background-image: radial-gradient(circle, var(--text-dim) 1px, transparent 1.2px);
-  background-size: 6px 6px;
-  background-position: 2px 2px;
-  opacity: 0.5;
-  transition: opacity 0.15s ease;
-}
-
-.box-move-handle-bl {
-  top: auto;
-  right: auto;
-  bottom: 4px;
-  left: 28px;
-}
-
-.box-move-handle:hover,
-.box-move-handle.dragging {
-  opacity: 1;
-}
-
-.box-move-handle.dragging {
-  background-image: radial-gradient(circle, var(--accent) 1px, transparent 1.2px);
-}
+#panel-dataset.active { display: flex; flex-direction: column; }
+#panel-finetune.active { display: flex; flex-direction: column; }
+#panel-rag.active { display: flex; flex-direction: column; }
 
 .panel-header h1 {
   font-family: var(--font-display);
@@ -366,17 +248,6 @@ body {
   border-radius: 12px;
   padding: 22px;
   margin-bottom: 20px;
-}
-
-/* A .resizable-box starts out sitting in normal document flow like any
-   other .card / .active-banner, but the first time its panel is opened,
-   script.js (convertPanelInnerBoxes) measures its current position/size and
-   converts it into its own independently resizable box -- same 8-handle
-   mechanism as a panel, one level deeper. overflow:auto is safe to set here
-   upfront since it only has an effect once the box has an explicit height
-   smaller than its content. */
-.resizable-box {
-  overflow: auto;
 }
 
 .field-label {
@@ -463,6 +334,18 @@ input:focus, textarea:focus, select:focus {
 .btn.danger { border-color: var(--danger); color: var(--danger); }
 .btn.danger:hover:not(:disabled) { background: rgba(226, 114, 91, 0.12); }
 
+.btn.recording {
+  border-color: var(--danger);
+  color: var(--danger);
+  background: rgba(226, 114, 91, 0.12);
+  animation: mic-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes mic-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.55; }
+}
+
 .btn:disabled {
   opacity: 0.4;
   cursor: not-allowed;
@@ -539,6 +422,12 @@ input:focus, textarea:focus, select:focus {
   word-break: break-all;
 }
 
+.sidebar-divider {
+  border: none;
+  border-top: 1px solid var(--border);
+  margin: 20px 0;
+}
+
 .success-card {
   border-color: var(--accent-dim);
 }
@@ -563,10 +452,139 @@ input:focus, textarea:focus, select:focus {
   margin: 0;
 }
 
+/* ================= DATASET ================= */
+/* Q&A editor on the left, Preview pane on the right; drag the divider between them to resize. */
+.dataset-split {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+
+#datasetAddCard {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  margin-bottom: 0;
+  overflow-y: auto;
+}
+
+.dataset-preview-pane {
+  flex: 0 0 var(--dataset-preview-width);
+  width: var(--dataset-preview-width);
+  display: flex;
+  min-height: 0;
+}
+
+#datasetPreviewCard {
+  flex: 1;
+  min-height: 0;
+  margin-bottom: 0;
+  overflow-y: auto;
+}
+
+#datasetAddCard .path-row {
+  flex-wrap: wrap;
+}
+
+#datasetAddRow {
+  margin-top: 18px;
+}
+
+#datasetAddRow .btn.big {
+  flex: 1;
+  width: auto;
+  margin-top: 0;
+}
+
+/* Live formatted preview shown under Question/Answer as you type. */
+.dataset-live-preview {
+  margin-top: 6px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel-2);
+  font-size: 13px;
+  min-height: 20px;
+}
+
+.dataset-live-preview:empty::before {
+  content: "Preview appears here as you type (Markdown, HTML, and LaTeX supported).";
+  color: var(--text-dim);
+  font-style: italic;
+}
+
+/* Each Q&A pair in the Preview box, separated by a hairline. */
+.dataset-preview-item {
+  padding: 10px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.dataset-preview-item:first-child {
+  padding-top: 0;
+}
+
+.dataset-preview-item:last-child {
+  padding-bottom: 0;
+  border-bottom: none;
+}
+
+.dataset-preview-item-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.dataset-preview-item-actions .btn {
+  padding: 4px 12px;
+  font-size: 12px;
+}
+
+.dataset-preview-item.editing {
+  background: rgba(94, 200, 168, 0.08);
+  border-radius: 8px;
+  padding-left: 10px;
+  padding-right: 10px;
+  margin-left: -10px;
+  margin-right: -10px;
+}
+
+/* ================= FINE-TUNE / RAG (shared 3-column layout) ================= */
+/* Both tabs use the same 3 columns: setup, settings, and log. Drag the
+   dividers between them to resize. */
+.finetune-columns {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+
+.finetune-col {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+#ftCol1 { flex: 0 0 var(--ft-col1-width); width: var(--ft-col1-width); }
+#ftCol2 { flex: 0 0 var(--ft-col2-width); width: var(--ft-col2-width); }
+#ftCol3 { flex: 1; }
+
+#ragCol1 { flex: 0 0 var(--rag-col1-width); width: var(--rag-col1-width); }
+#ragCol2 { flex: 0 0 var(--rag-col2-width); width: var(--rag-col2-width); }
+#ragCol3 { flex: 1; }
+
+.finetune-col-right-group {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
+
 /* ================= CHAT ================= */
-/* --chat-sidebar-width (defined in :root above) sets the default width of
-   the right-hand settings panel; drag the .resizer handle between the two
-   columns to change it live -- see makeHorizontalResizer() in script.js. */
+/* Chat box on the left, settings panel on the right; drag the divider between them to resize. */
 .chat-layout {
   display: flex;
   flex: 1;
@@ -578,18 +596,42 @@ input:focus, textarea:focus, select:focus {
 .chat-sidebar {
   flex: 0 0 var(--chat-sidebar-width);
   width: var(--chat-sidebar-width);
+  display: flex;
+  min-height: 0;
+}
+
+/* Stretches to fill the settings panel's full height. */
+#chatSidebarCard {
+  flex: 1;
+  min-height: 0;
+  margin-bottom: 0;
   overflow-y: auto;
 }
 
 .chat-sidebar .path-row {
-  flex-direction: column;
+  flex-wrap: wrap;
+}
+
+.chat-sidebar .path-row input {
+  flex: 1 1 100%;
 }
 
 .chat-toolbar {
   display: flex;
   justify-content: flex-end;
+  align-items: center;
+  gap: 8px;
   margin-bottom: 10px;
   flex-shrink: 0;
+}
+
+.chat-toolbar-label {
+  color: var(--text-dim);
+  font-size: 12.5px;
+}
+
+.chat-toolbar select {
+  width: auto;
 }
 
 .chat-log {
@@ -621,39 +663,40 @@ input:focus, textarea:focus, select:focus {
   color: var(--text-dim);
 }
 
-/* ---- markdown / code / table / KaTeX rendering inside bot replies ---- */
-.chat-bubble.bot .bubble-text {
+/* Styling for formatted text (Markdown, code, tables, math) shown anywhere
+   in the app -- chat replies, and the Dataset Preview and live previews. */
+.rendered-content {
   display: block;
 }
 
-.chat-bubble.bot .bubble-text > *:first-child { margin-top: 0; }
-.chat-bubble.bot .bubble-text > *:last-child { margin-bottom: 0; }
+.rendered-content > *:first-child { margin-top: 0; }
+.rendered-content > *:last-child { margin-bottom: 0; }
 
-.chat-bubble.bot .bubble-text p {
+.rendered-content p {
   margin: 0 0 10px 0;
   white-space: pre-wrap;
 }
 
-.chat-bubble.bot .bubble-text ul,
-.chat-bubble.bot .bubble-text ol {
+.rendered-content ul,
+.rendered-content ol {
   margin: 0 0 10px 0;
   padding-left: 22px;
 }
 
-.chat-bubble.bot .bubble-text li { margin-bottom: 4px; }
+.rendered-content li { margin-bottom: 4px; }
 
-.chat-bubble.bot .bubble-text blockquote {
+.rendered-content blockquote {
   margin: 0 0 10px 0;
   padding: 2px 12px;
   border-left: 3px solid var(--accent-dim);
   color: var(--text-dim);
 }
 
-.chat-bubble.bot .bubble-text a {
+.rendered-content a {
   color: var(--accent);
 }
 
-.chat-bubble.bot .bubble-text code {
+.rendered-content code {
   font-family: var(--font-mono);
   background: rgba(0, 0, 0, 0.25);
   padding: 1px 5px;
@@ -661,7 +704,7 @@ input:focus, textarea:focus, select:focus {
   font-size: 12.5px;
 }
 
-.chat-bubble.bot .bubble-text pre {
+.rendered-content pre {
   background: rgba(0, 0, 0, 0.3);
   border: 1px solid var(--border);
   border-radius: 8px;
@@ -670,12 +713,12 @@ input:focus, textarea:focus, select:focus {
   margin: 0 0 10px 0;
 }
 
-.chat-bubble.bot .bubble-text pre code {
+.rendered-content pre code {
   background: none;
   padding: 0;
 }
 
-.chat-bubble.bot .bubble-text table {
+.rendered-content table {
   border-collapse: collapse;
   margin: 0 0 10px 0;
   font-size: 12.5px;
@@ -683,13 +726,13 @@ input:focus, textarea:focus, select:focus {
   overflow-x: auto;
 }
 
-.chat-bubble.bot .bubble-text th,
-.chat-bubble.bot .bubble-text td {
+.rendered-content th,
+.rendered-content td {
   border: 1px solid var(--border);
   padding: 5px 10px;
 }
 
-.chat-bubble.bot .bubble-text .katex-display {
+.rendered-content .katex-display {
   overflow-x: auto;
   overflow-y: hidden;
   margin: 8px 0;
@@ -725,6 +768,27 @@ input:focus, textarea:focus, select:focus {
 .copy-btn:hover {
   color: var(--accent);
   border-color: var(--accent);
+}
+
+.speak-btn {
+  align-self: flex-end;
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  padding: 2px 8px;
+  border-radius: 6px;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.speak-btn:hover:not(:disabled) {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.speak-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .chat-input-row {
