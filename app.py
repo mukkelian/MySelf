@@ -7,17 +7,20 @@ Then open:    http://127.0.0.1:8000
 
 import os
 import shutil
+import tempfile
 import threading
 import traceback
-from typing import Literal
+from typing import Literal, Optional
 
-from fastapi import FastAPI
-from fastapi.responses import FileResponse
+import psutil
+
+from fastapi import FastAPI, File, Form, UploadFile
+from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 import config
-from modules import data_manager, finetune, model_manager, rag
+from modules import chat_history, data_manager, finetune, model_manager, rag, speech
 
 app = FastAPI(title="MySelf Dashboard")
 
@@ -30,6 +33,9 @@ job_lock = threading.Lock()
 
 chat_lock = threading.Lock()
 chat_job = {"active": False, "stop_event": None}
+
+# Only one spoken reply is generated at a time, to keep things running smoothly.
+speech_lock = threading.Lock()
 
 
 def job_log(line: str):
@@ -45,7 +51,7 @@ def run_job(mode: str, target_fn, *args):
         target_fn(*args, log=job_log)
         with job_lock:
             job["done"] = True
-    except Exception as exc:  # noqa: BLE001 - surface any training error to the UI
+    except Exception as exc:  # noqa: BLE001
         traceback.print_exc()
         with job_lock:
             job["error"] = str(exc)
@@ -88,14 +94,9 @@ class RagBody(BaseModel):
     device: Literal["auto", "cpu", "gpu"] | None = None
 
 
-class ChatTurn(BaseModel):
-    question: str
-    answer: str
-
-
 class ChatBody(BaseModel):
     question: str
-    history: list[ChatTurn] = []
+    question_display: str | None = None  # the question in your spoken language, if known
 
 
 class ChatDeviceBody(BaseModel):
@@ -107,71 +108,119 @@ class ChatMemoryBody(BaseModel):
     max_new_tokens: int | None = None
 
 
-class DatasetAddBody(BaseModel):
+class ChatAudioModeBody(BaseModel):
+    enabled: bool
+
+
+class ChatFontSizeBody(BaseModel):
+    size: int
+
+
+class DatasetPreviewFontSizeBody(BaseModel):
+    size: int
+
+
+class CpuThreadsBody(BaseModel):
+    threads: Optional[int] = None  # blank = let the computer decide automatically
+
+
+class ChatLanguageBody(BaseModel):
+    language: str
+
+
+class ChatSttModelBody(BaseModel):
+    model_size: str
+
+
+class ChatTtsEngineBody(BaseModel):
+    engine: str
+
+
+class ChatTranslateModelBody(BaseModel):
+    model: str  # empty resets to the default translation model
+
+
+class SpeakBody(BaseModel):
+    text: str
+    language: str = "en"
+
+
+class DatasetQaBody(BaseModel):
     question: str
     answer: str
-    target_file: str
-    create_new: bool = False
+    target_path: str  # the Q&A file chosen via Browse
+
+
+class DatasetUpdateBody(BaseModel):
+    question: str
+    answer: str
+    target_path: str
+    index: int  # which pair, in order, this is
+
+
+class DatasetDeleteBody(BaseModel):
+    target_path: str
+    index: int
 
 
 @app.get("/api/settings")
 def get_settings():
-    return config.load_settings()
+    settings = config.load_settings()
+    # Checked fresh every time, so the CPU-threads option always matches this machine.
+    settings["total_threads"] = os.cpu_count() or 1
+    settings["physical_cores"] = psutil.cpu_count(logical=False) or settings["total_threads"]
+    return settings
 
 @app.get("/api/fs/pick_folder")
 def fs_pick_folder(path: str = ""):
     return {"path": data_manager.pick_folder(path)}
 
-@app.post("/api/dataset/select")
-def select_dataset(body: PathBody):
-    try:
-        summary = data_manager.dataset_summary(body.path)
-    except Exception as exc:  # noqa: BLE001
-        return {"ok": False, "error": str(exc)}
-    config.update_settings({"dataset_path": body.path})
-    return {"ok": True, "dataset_path": body.path, **summary}
+@app.get("/api/fs/pick_save_file")
+def fs_pick_save_file(path: str = ""):
+    """Open a dialog for picking an existing Q&A file, or creating a new one."""
+    return {"path": data_manager.pick_save_file(path)}
 
-
-@app.get("/api/dataset/summary")
-def dataset_summary():
-    settings = config.load_settings()
-    if not settings["dataset_path"]:
-        return {"count": 0, "preview": []}
-    return data_manager.dataset_summary(settings["dataset_path"])
-
-@app.get("/api/dataset/files")
-def dataset_files():
-    settings = config.load_settings()
-    if not settings["dataset_path"]:
-        return {"files": [], "active_file": None}
-    try:
-        files = data_manager.list_dataset_files(settings["dataset_path"])
-    except Exception as exc:  # noqa: BLE001
-        return {"files": [], "active_file": None, "error": str(exc)}
-    return {"files": files, "active_file": settings.get("dataset_active_file")}
-
+@app.get("/api/dataset/preview")
+def dataset_preview(path: str = ""):
+    """Show the Q&A pairs currently in one file."""
+    return data_manager.preview_qa_file(path)
 
 @app.post("/api/dataset/add")
-def dataset_add(body: DatasetAddBody):
-    settings = config.load_settings()
-    if not settings["dataset_path"]:
-        return {"ok": False, "error": "Select a dataset folder first."}
-
+def dataset_add(body: DatasetQaBody):
     try:
-        full_path = data_manager.append_qa_pair(
-            settings["dataset_path"], body.target_file, body.question, body.answer, body.create_new
-        )
+        data_manager.append_qa_pair_to_file(body.target_path, body.question, body.answer)
     except Exception as exc:  # noqa: BLE001
         return {"ok": False, "error": str(exc)}
 
-    config.update_settings({"dataset_active_file": os.path.basename(full_path)})
-    summary = data_manager.dataset_summary(settings["dataset_path"])
-    return {"ok": True, "saved_to": full_path, **summary}
+    config.update_settings({"dataset_target_file": body.target_path})
+    preview = data_manager.preview_qa_file(body.target_path)
+    return {"ok": True, "target_path": body.target_path, **preview}
+
+@app.post("/api/dataset/update")
+def dataset_update(body: DatasetUpdateBody):
+    """Save an edited Q&A pair."""
+    try:
+        data_manager.update_qa_pair(body.target_path, body.index, body.question, body.answer)
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "error": str(exc)}
+
+    preview = data_manager.preview_qa_file(body.target_path)
+    return {"ok": True, **preview}
+
+@app.post("/api/dataset/delete")
+def dataset_delete(body: DatasetDeleteBody):
+    try:
+        data_manager.delete_qa_pair(body.target_path, body.index)
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "error": str(exc)}
+
+    preview = data_manager.preview_qa_file(body.target_path)
+    return {"ok": True, **preview}
 
 @app.post("/api/finetune/select_model")
 def select_finetune_model(body: PathBody):
     if not model_manager.is_valid_model_folder(body.path):
-        return {"ok": False, "error": "That folder does not contain a config.json (not a Hugging Face model)."}
+        return {"ok": False, "error": "That doesn't look like a valid model folder."}
     config.update_settings({"finetune": {"model_path": body.path}})
     return {"ok": True, "model_path": body.path}
 
@@ -254,7 +303,7 @@ def finalize_finetune(body: FinetuneFinalizeBody):
 @app.post("/api/rag/select_model")
 def select_rag_model(body: PathBody):
     if not model_manager.is_valid_model_folder(body.path):
-        return {"ok": False, "error": "That folder does not contain a config.json (not a Hugging Face model)."}
+        return {"ok": False, "error": "That doesn't look like a valid model folder."}
     config.update_settings({"rag": {"model_path": body.path}})
     return {"ok": True, "model_path": body.path}
 
@@ -307,9 +356,10 @@ def train_status():
 @app.post("/api/chat/select_model")
 def select_chat_model(body: PathBody):
     if not model_manager.is_valid_model_folder(body.path):
-        return {"ok": False, "error": "That folder does not contain a config.json (not a Hugging Face model)."}
+        return {"ok": False, "error": "That doesn't look like a valid model folder."}
     config.update_settings({"chat_model_path": body.path})
     model_manager.clear_cache()
+    chat_history.clear()  # a new model shouldn't carry over the old conversation
     rag_detected = os.path.isdir(os.path.join(body.path, RAG_SUBDIR))
     return {"ok": True, "model_path": body.path, "rag_detected": rag_detected}
 
@@ -353,21 +403,32 @@ def chat(body: ChatBody):
 
         rag_index_dir = os.path.join(model_path, RAG_SUBDIR)
         device_preference = settings.get("chat_device", "auto")
-        history = [turn.model_dump() for turn in body.history]
+        stt_language = settings.get("chat_stt_language", "en")
+        tts_language = settings.get("chat_tts_language", "en")
+        translate_model_override = settings.get("chat_translate_model") or None
         max_history_turns = settings.get("chat_history_turns", 6)
         max_new_tokens = settings.get("chat_max_new_tokens", 400)
 
+        question_en = body.question
+        # Typed questions have no native-language text yet, so translate one.
+        question_display = body.question_display or speech.translate_from_english(
+            question_en, stt_language, translate_model_override
+        )
+
+        persisted = chat_history.load()
+        history = [{"question": t["question_en"], "answer": t["answer_en"]} for t in persisted]
+
         try:
             if os.path.isdir(rag_index_dir):
-                reply = rag.answer(
-                    body.question, model_path, rag_index_dir, settings["rag"]["top_k"],
+                answer_en = rag.answer(
+                    question_en, model_path, rag_index_dir, settings["rag"]["top_k"],
                     device_preference=device_preference, history=history,
                     max_history_turns=max_history_turns, max_new_tokens=max_new_tokens,
                     stop_event=stop_event,
                 )
             else:
-                reply = model_manager.generate(
-                    model_path, body.question, history=history, device_preference=device_preference,
+                answer_en = model_manager.generate(
+                    model_path, question_en, history=history, device_preference=device_preference,
                     max_history_turns=max_history_turns, max_new_tokens=max_new_tokens,
                     stop_event=stop_event,
                 )
@@ -375,11 +436,38 @@ def chat(body: ChatBody):
             traceback.print_exc()
             return {"ok": False, "error": str(exc)}
 
-        return {"ok": True, "answer": reply, "stopped": stop_event.is_set()}
+        answer_display = speech.translate_from_english(answer_en, tts_language, translate_model_override)
+
+        chat_history.append({
+            "question_en": question_en,
+            "question_display": question_display,
+            "answer_en": answer_en,
+            "answer_display": answer_display,
+            "stt_language": stt_language,
+            "tts_language": tts_language,
+        })
+
+        return {
+            "ok": True,
+            "question_display": question_display,
+            "answer_display": answer_display,
+            "stopped": stop_event.is_set(),
+        }
     finally:
         with chat_lock:
             chat_job["active"] = False
             chat_job["stop_event"] = None
+
+
+@app.get("/api/chat/history")
+def get_chat_history():
+    return {"history": chat_history.load()}
+
+
+@app.post("/api/chat/clear")
+def clear_chat_history():
+    chat_history.clear()
+    return {"ok": True}
 
 
 @app.post("/api/chat/stop")
@@ -389,6 +477,134 @@ def stop_chat():
             chat_job["stop_event"].set()
             return {"ok": True, "stopped": True}
     return {"ok": True, "stopped": False}
+
+
+@app.get("/api/speech/languages")
+def speech_languages():
+    return {"languages": speech.language_options()}
+
+
+@app.get("/api/speech/voice_options")
+def speech_voice_options():
+    return speech.voice_options()
+
+
+@app.post("/api/chat/stt_model")
+def set_chat_stt_model(body: ChatSttModelBody):
+    """How accurate speech-to-text should be when you use the microphone."""
+    if body.model_size not in speech.STT_MODEL_SIZES:
+        return {"ok": False, "error": "Unsupported STT model size."}
+    config.update_settings({"chat_stt_model_size": body.model_size})
+    return {"ok": True, "model_size": body.model_size}
+
+
+@app.post("/api/chat/tts_engine")
+def set_chat_tts_engine(body: ChatTtsEngineBody):
+    """Which voice engine reads replies out loud."""
+    if body.engine not in speech.TTS_ENGINES:
+        return {"ok": False, "error": "Unsupported TTS engine."}
+    config.update_settings({"chat_tts_engine": body.engine})
+    return {"ok": True, "engine": body.engine}
+
+
+@app.post("/api/chat/translate_model")
+def set_chat_translate_model(body: ChatTranslateModelBody):
+    """Use a custom translation model instead of the default one; leave empty to use the default."""
+    model = body.model.strip()
+    config.update_settings({"chat_translate_model": model})
+    return {"ok": True, "model": model}
+
+
+@app.post("/api/chat/audio_mode")
+def set_chat_audio_mode(body: ChatAudioModeBody):
+    """Turn automatic read-aloud for replies on or off."""
+    config.update_settings({"chat_audio_mode": body.enabled})
+    return {"ok": True, "enabled": body.enabled}
+
+
+@app.post("/api/chat/font_size")
+def set_chat_font_size(body: ChatFontSizeBody):
+    """Remember the chosen chat text size."""
+    if not 1 <= body.size <= 40:
+        return {"ok": False, "error": "Font size must be between 1 and 40."}
+    config.update_settings({"chat_font_size": body.size})
+    return {"ok": True, "size": body.size}
+
+
+@app.post("/api/dataset/preview_font_size")
+def set_dataset_preview_font_size(body: DatasetPreviewFontSizeBody):
+    """Remember the chosen Dataset preview text size."""
+    if not 1 <= body.size <= 40:
+        return {"ok": False, "error": "Font size must be between 1 and 40."}
+    config.update_settings({"dataset_preview_font_size": body.size})
+    return {"ok": True, "size": body.size}
+
+
+@app.post("/api/system/cpu_threads")
+def set_cpu_threads(body: CpuThreadsBody):
+    """Set how many CPU threads the app uses. Switching back to "auto" fully
+    takes effect only after restarting the app."""
+    total = os.cpu_count() or 1
+    if body.threads is not None and not 1 <= body.threads <= total:
+        return {"ok": False, "error": f"Threads must be between 1 and {total}."}
+    config.update_settings({"cpu_threads": body.threads})
+    model_manager.apply_cpu_thread_setting(body.threads)
+    return {"ok": True, "threads": body.threads}
+
+
+@app.post("/api/chat/stt_language")
+def set_chat_stt_language(body: ChatLanguageBody):
+    """Which language you speak when using the microphone."""
+    if body.language not in speech.LANGUAGES:
+        return {"ok": False, "error": "Unsupported language."}
+    config.update_settings({"chat_stt_language": body.language})
+    return {"ok": True, "language": body.language}
+
+
+@app.post("/api/chat/tts_language")
+def set_chat_tts_language(body: ChatLanguageBody):
+    """Which language replies are translated into and read back in --
+    can be different from the language you speak in."""
+    if body.language not in speech.LANGUAGES:
+        return {"ok": False, "error": "Unsupported language."}
+    config.update_settings({"chat_tts_language": body.language})
+    return {"ok": True, "language": body.language}
+
+
+@app.post("/api/speech/transcribe")
+def speech_transcribe(audio: UploadFile = File(...), language: str = Form("en")):
+    """Turn a voice recording into text, both in the language you spoke and in English."""
+    suffix = os.path.splitext(audio.filename or "")[1] or ".webm"
+    with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
+        tmp.write(audio.file.read())
+        tmp_path = tmp.name
+
+    model_size = config.load_settings().get("chat_stt_model_size", speech.STT_MODEL_SIZE)
+    try:
+        text_display, text_en = speech.transcribe_dual(tmp_path, language, model_size)
+    except Exception as exc:  # noqa: BLE001
+        traceback.print_exc()
+        return {"ok": False, "error": str(exc)}
+    finally:
+        os.remove(tmp_path)
+
+    return {"ok": True, "text_display": text_display, "text_en": text_en}
+
+
+@app.post("/api/speech/speak")
+def speech_speak(body: SpeakBody):
+    """Turn text into a spoken audio reply."""
+    settings = config.load_settings()
+    device_preference = settings.get("chat_device", "auto")
+    tts_engine = settings.get("chat_tts_engine", "auto")
+    with speech_lock:
+        try:
+            audio_bytes = speech.synthesize_speech(body.text, body.language, device_preference, tts_engine)
+        except Exception as exc:  # noqa: BLE001
+            traceback.print_exc()
+            return {"ok": False, "error": str(exc)}
+
+    return Response(content=audio_bytes, media_type="audio/wav")
 
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
