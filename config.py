@@ -1,10 +1,7 @@
 """
-config.py
----------
-Very small helper that reads/writes a single JSON file (settings.json).
-Every setting picked on the dashboard (model path, dataset path, training
-hyper-parameters, chosen mode, ...) lives in that one file so the whole
-app has one source of truth and restarting the server does not lose state.
+Keeps track of all your settings (which model you picked, dataset path,
+training options, etc.) in one file called settings.json, so nothing is
+lost when you restart the app.
 """
 
 import json
@@ -16,17 +13,25 @@ SETTINGS_PATH = os.path.join(os.path.dirname(__file__), "settings.json")
 _lock = RLock()
 
 DEFAULTS = {
-    "dataset_path": None,          # local folder that contains Q&A files
-    "dataset_active_file": None,   # filename (inside dataset_path) that pasted Q&A pairs append to
-    "chat_model_path": None,       # model folder currently selected in the Chat panel
-    "chat_device": "auto",         # "auto" (GPU if available), "cpu", or "gpu" -- used for chat generation
-    "chat_history_turns": 6,       # how many previous Q/A turns to send as context (0 = no memory)
-    "chat_max_new_tokens": 400,    # max tokens generated per Chat reply
+    "dataset_target_file": None,   # the Q&A file currently chosen in the Dataset tab
+    "dataset_preview_font_size": 14,  # text size in the Dataset preview box
+    "chat_model_path": None,       # the model currently chosen for chatting
+    "chat_device": "auto",         # "auto", "cpu", or "gpu" -- what runs the chat
+    "chat_history_turns": 6,       # how many earlier messages the chat remembers
+    "chat_max_new_tokens": 400,    # how long a chat reply can be
+    "chat_audio_mode": True,       # True = read replies out loud automatically
+    "chat_font_size": 15,          # text size in the chat window
+    "chat_stt_language": "en",     # language you speak when using the microphone
+    "chat_tts_language": "en",     # language replies are read back in
+    "chat_stt_model_size": "base", # how accurate speech-to-text is (bigger = slower, more accurate)
+    "chat_tts_engine": "auto",     # which voice engine reads replies aloud
+    "chat_translate_model": "",    # custom translation model, blank = use the default
+    "cpu_threads": None,           # how many CPU threads to use; blank = let the computer decide
     "finetune": {
-        "model_path": None,        # base model folder selected in the Fine-Tune panel
-        "dataset_path": None,      # Q&A folder selected in the Fine-Tune panel
-        "full_finetune": False,    # False = LoRA adapters, True = train all parameters
-        "device": "auto",          # "auto" (GPU if available), "cpu", or "gpu"
+        "model_path": None,        # base model chosen in the Fine-Tune tab
+        "dataset_path": None,      # Q&A folder chosen in the Fine-Tune tab
+        "full_finetune": False,    # True = retrain everything (slower); False = lighter LoRA training
+        "device": "auto",          # "auto", "cpu", or "gpu"
         "epochs": 3,
         "learning_rate": 2e-4,
         "batch_size": 2,
@@ -35,12 +40,12 @@ DEFAULTS = {
         "lora_dropout": 0.05,
         "max_length": 256,
         "staging_dir": "models/_staging_finetune",
-        "text_chunk_size": 200,  # words per training example when the dataset folder has raw .txt/.md files
+        "text_chunk_size": 200,  # how many words go into one training example
     },
     "rag": {
-        "model_path": None,        # model folder selected in the RAG panel
-        "dataset_path": None,      # Q&A folder selected in the RAG panel
-        "device": "auto",          # "auto" (GPU if available), "cpu", or "gpu" -- used to build the index
+        "model_path": None,        # model chosen in the RAG tab
+        "dataset_path": None,      # Q&A folder chosen in the RAG tab
+        "device": "auto",          # "auto", "cpu", or "gpu"
         "embedding_model": "sentence-transformers/all-MiniLM-L6-v2",
         "chunk_size": 200,
         "top_k": 3,
@@ -49,9 +54,8 @@ DEFAULTS = {
 
 
 def _with_defaults(settings: dict) -> dict:
-    """Fill in any keys missing from an older settings.json with their
-    default value, one level deep -- so adding a new setting later never
-    breaks an install that already has a settings.json on disk."""
+    """Add any missing settings back in with their default value, so an
+    older settings.json still works after the app gains new options."""
     merged = json.loads(json.dumps(DEFAULTS))
     for key, value in settings.items():
         if isinstance(value, dict) and isinstance(merged.get(key), dict):
@@ -62,7 +66,7 @@ def _with_defaults(settings: dict) -> dict:
 
 
 def load_settings() -> dict:
-    """Return current settings, creating the file with defaults if missing."""
+    """Read your saved settings, creating the file with defaults if it doesn't exist yet."""
     with _lock:
         if not os.path.exists(SETTINGS_PATH):
             save_settings(DEFAULTS)
@@ -76,18 +80,18 @@ def load_settings() -> dict:
 
 
 def save_settings(settings: dict) -> None:
-    """Persist the given settings dict to disk."""
+    """Write the given settings to disk."""
     with _lock:
         with open(SETTINGS_PATH, "w") as f:
             json.dump(settings, f, indent=2)
 
 
 def update_settings(patch: dict) -> dict:
-    """Shallow-merge `patch` into the current settings and save.
+    """Update just the given settings and save, without wiping out the rest.
 
-    Nested dicts (like 'finetune' or 'rag') are merged one level deep so a
-    partial update (e.g. only {'finetune': {'epochs': 5}}) does not wipe
-    out the other keys in that section.
+    Grouped settings (like 'finetune' or 'rag') keep their other values --
+    e.g. updating only {'finetune': {'epochs': 5}} won't erase the rest of
+    that group.
     """
     current = load_settings()
     for key, value in patch.items():
