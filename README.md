@@ -10,6 +10,54 @@ Everything (backend and frontend) runs entirely on your own machine — no
 data, prompts, or models ever leave it, and no build step is needed for the
 frontend (plain HTML/CSS/JS).
 
+## Downloading a compatible LLM model
+
+MySelf loads models straight from a local folder (not directly from Hugging
+Face), so you first need to save one to disk. Any regular "causal LM" text
+model works — chat/instruct models like TinyLlama, Qwen2.5, Phi-3, SmolLM2,
+etc. Avoid GGUF/ONNX-only repos (search results tagged "GGUF" or with
+`*.gguf` files) — those are for other tools like llama.cpp, not this one.
+
+**Files you need in the model folder**
+
+| File | Needed? | What it's for |
+| --- | --- | --- |
+| `config.json` | **Required** | MySelf checks for this file to decide whether a folder is a valid model at all. |
+| `model.safetensors` (or sharded `model-0000X-of-0000Y.safetensors` + `model.safetensors.index.json`) | **Required** | The model's weights. Prefer safetensors over the older `pytorch_model.bin` if the repo offers both. |
+| `tokenizer.json`, `tokenizer_config.json` | **Required** | Turns your text into tokens the model understands, and back into text again. |
+| `special_tokens_map.json` | Usually required | Defines things like the "end of reply" token. |
+| `vocab.json` / `merges.txt` **or** `tokenizer.model` / `spiece.model` | Required if present | Older/alternate tokenizer formats some repos use instead of `tokenizer.json`. |
+| `generation_config.json` | Recommended | The model's suggested default generation settings. |
+| `chat_template.jinja` (or a `chat_template` field inside `tokenizer_config.json`) | Recommended for chat/instruct models | Formats your conversation the way the model was trained to expect. Without it, MySelf still works but falls back to a plainer prompt format. |
+| Anything else (`README.md`, `.gguf`, `*.onnx`, `tf_model.h5`, `flax_model.msgpack`, images, etc.) | Not needed | Other tools/formats MySelf never reads — skip these to save disk space. |
+
+**How to get them onto your machine** — two options:
+
+1. **Easiest — use the included script.** It asks for the model's Hugging
+   Face link, checks the repo's real file list, and downloads exactly the
+   files from the table above that repo actually has — nothing more. It
+   won't pull in duplicate weight copies some repos keep in subfolders
+   (`fp16/`, `onnx/`, `gguf/`, ...), so you don't burn bandwidth on formats
+   MySelf never reads:
+
+   ```bash
+   python download_model.py
+   ```
+
+   It'll prompt for the model link (e.g.
+   `https://huggingface.co/TinyLlama/TinyLlama-1.1B-Chat-v1.0`, or just
+   `TinyLlama/TinyLlama-1.1B-Chat-v1.0`) and a destination folder (defaults
+   to `local_models/<model-name>`), then prints the local path to paste into
+   MySelf's model folder field.
+
+2. **Manual** — open the model's "Files and versions" tab on huggingface.co
+   and download each file from the table above yourself into one folder, or
+   use `huggingface-cli download <repo_id> --local-dir <folder>` to grab the
+   whole repo at once.
+
+Either way, once you have a folder on disk, point any panel's model field
+(Fine-Tune, RAG, or Chat) at it and click "Use this model."
+
 ## Features
 
 - **Dataset panel** — point at a local folder of `.json` / `.jsonl` / `.csv`
@@ -121,18 +169,17 @@ model already does.
 
 ## 2. Get a small model onto your laptop
 
-Pick a small causal LM from Hugging Face and save it locally, for example:
+Pick a small causal LM from Hugging Face and save it locally. The easiest
+way is the included script — it asks for the model's Hugging Face link and
+downloads just the files MySelf needs:
 
 ```bash
-python -c "
-from transformers import AutoModelForCausalLM, AutoTokenizer
-name = 'TinyLlama/TinyLlama-1.1B-Chat-v1.0'
-AutoModelForCausalLM.from_pretrained(name).save_pretrained('./local_models/tinyllama')
-AutoTokenizer.from_pretrained(name).save_pretrained('./local_models/tinyllama')
-"
+python download_model.py
 ```
 
-Any small local causal-LM folder works the same way (GPT-2, Qwen2.5-0.5B, etc.).
+See "Downloading a compatible LLM model" below for exactly which files that
+is and a manual alternative. Any small local causal-LM folder works the same
+way (TinyLlama, GPT-2, Qwen2.5-0.5B, etc.).
 
 ## 3. Prepare your Q&A data
 
