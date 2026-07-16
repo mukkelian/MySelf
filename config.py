@@ -8,7 +8,8 @@ import json
 import os
 from threading import RLock
 
-SETTINGS_PATH = os.path.join(os.path.dirname(__file__), "settings.json")
+PROJECT_ROOT = os.path.dirname(__file__)
+SETTINGS_PATH = os.path.join(PROJECT_ROOT, "settings.json")
 
 _lock = RLock()
 

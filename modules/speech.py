@@ -24,7 +24,7 @@ import wave
 from faster_whisper import WhisperModel
 from transformers import AutoModelForSeq2SeqLM, AutoTokenizer
 
-from . import model_manager
+from . import messages, model_manager
 
 # Every language the app supports, and which voice/translation tools to use for each.
 LANGUAGES = {
@@ -94,9 +94,14 @@ def voice_options() -> dict:
     return {"stt_model_sizes": list(STT_MODEL_SIZES), "tts_engines": list(TTS_ENGINES)}
 
 
+def _require_language(language: str) -> None:
+    if language not in LANGUAGES:
+        raise ValueError(messages.unsupported_language(language))
+
+
 def _get_stt_model(model_size: str) -> WhisperModel:
     if model_size not in STT_MODEL_SIZES:
-        raise ValueError(f"Unsupported STT model size '{model_size}'.")
+        raise ValueError(messages.unsupported_stt_model_size(model_size))
     if model_size not in _STT_CACHE:
         _STT_CACHE[model_size] = WhisperModel(model_size, device="cpu", compute_type="int8")
     return _STT_CACHE[model_size]
@@ -105,8 +110,7 @@ def _get_stt_model(model_size: str) -> WhisperModel:
 def transcribe_dual(audio_path: str, language: str, model_size: str = STT_MODEL_SIZE) -> tuple:
     """Turn a recording into text, in both the spoken language and English
     (the English version is what gets sent to the model)."""
-    if language not in LANGUAGES:
-        raise ValueError(f"Unsupported language '{language}'.")
+    _require_language(language)
 
     model = _get_stt_model(model_size)
     whisper_lang = LANGUAGES[language]["whisper"]
@@ -134,8 +138,7 @@ def _get_translator(marian_model: str):
 def translate_from_english(text: str, target_language: str, model_override: str | None = None) -> str:
     """Translate English text into another language. English and Hinglish
     are left unchanged, since no translation is needed for those."""
-    if target_language not in LANGUAGES:
-        raise ValueError(f"Unsupported language '{target_language}'.")
+    _require_language(target_language)
 
     default_marian = LANGUAGES[target_language]["marian"]
     if default_marian is None or not text.strip():
@@ -197,10 +200,7 @@ def _synthesize_espeak(text: str, language: str) -> bytes:
                 capture_output=True,
             )
         except FileNotFoundError as exc:
-            raise FileNotFoundError(
-                "espeak-ng is not installed. Install it with your OS package manager "
-                "(e.g. 'sudo apt install espeak-ng' on Debian/Ubuntu) to enable spoken replies."
-            ) from exc
+            raise FileNotFoundError(messages.ESPEAK_NOT_INSTALLED) from exc
         with open(wav_path, "rb") as f:
             return f.read()
     finally:
@@ -212,10 +212,9 @@ def synthesize_speech(text: str, language: str, device_preference: str = "auto",
     """Turn text into spoken audio. "auto" uses the natural-sounding voice
     when available and falls back to the simpler backup voice otherwise;
     "bark" or "espeak" force one specific voice engine."""
-    if language not in LANGUAGES:
-        raise ValueError(f"Unsupported language '{language}'.")
+    _require_language(language)
     if engine not in TTS_ENGINES:
-        raise ValueError(f"Unsupported TTS engine '{engine}'.")
+        raise ValueError(messages.unsupported_tts_engine(engine))
     if not text.strip():
         text = "..."
 
@@ -224,7 +223,7 @@ def synthesize_speech(text: str, language: str, device_preference: str = "auto",
 
     if engine == "bark":
         if language not in BARK_VOICE_PRESETS:
-            raise ValueError(f"Bark has no voice preset for '{language}'; use \"auto\" or \"espeak\" instead.")
+            raise ValueError(messages.no_bark_voice_for(language))
         return _synthesize_bark(text, language, device_preference)
 
     if language in BARK_VOICE_PRESETS:

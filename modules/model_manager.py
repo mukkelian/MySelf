@@ -9,6 +9,7 @@ import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer, StoppingCriteria, StoppingCriteriaList
 
 import config
+from . import messages
 
 def apply_cpu_thread_setting(threads=None):
     """Set how many CPU threads the app is allowed to use. Leaving it blank
@@ -62,7 +63,7 @@ def get_device(preference: str = "auto") -> str:
             return "cuda"
         if has_mps:
             return "mps"
-        raise ValueError("GPU was requested but no CUDA/MPS device is available on this machine.")
+        raise ValueError(messages.gpu_not_available())
 
     if has_cuda:
         return "cuda"
@@ -74,10 +75,7 @@ def get_device(preference: str = "auto") -> str:
 def load_model(model_path: str, device_preference: str = "auto"):
     """Load a model from a folder, or reuse it if it's already loaded."""
     if not is_valid_model_folder(model_path):
-        raise ValueError(
-            f"'{model_path}' does not look like a valid model folder "
-            "(no config.json found inside it)."
-        )
+        raise ValueError(messages.invalid_model_folder_detail(model_path))
 
     device = get_device(device_preference)
 

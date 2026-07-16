@@ -5,6 +5,7 @@ Run it with:  python app.py
 Then open:    http://127.0.0.1:8000
 """
 
+import functools
 import os
 import shutil
 import tempfile
@@ -20,7 +21,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 import config
-from modules import chat_history, data_manager, finetune, model_manager, rag, speech
+from modules import browse, chat_history, data_manager, finetune, messages, model_manager, rag, speech
 
 app = FastAPI(title="MySelf Dashboard")
 
@@ -36,6 +37,21 @@ chat_job = {"active": False, "stop_event": None}
 
 # Only one spoken reply is generated at a time, to keep things running smoothly.
 speech_lock = threading.Lock()
+
+
+def api_errors(fn):
+    """Wraps a route so any error it raises comes back as {"ok": False,
+    "error": ...} instead of a 500 - lets every route just do its work and
+    raise on failure, without repeating the same try/except everywhere."""
+
+    @functools.wraps(fn)
+    def wrapper(*args, **kwargs):
+        try:
+            return fn(*args, **kwargs)
+        except Exception as exc:  # noqa: BLE001
+            return {"ok": False, "error": str(exc)}
+
+    return wrapper
 
 
 def job_log(line: str):
@@ -173,12 +189,19 @@ def get_settings():
 
 @app.get("/api/fs/pick_folder")
 def fs_pick_folder(path: str = ""):
-    return {"path": data_manager.pick_folder(path)}
+    """Open a dialog for picking a folder (used for model folders)."""
+    return {"path": browse.pick_folder(path)}
 
 @app.get("/api/fs/pick_save_file")
 def fs_pick_save_file(path: str = ""):
     """Open a dialog for picking an existing Q&A file, or creating a new one."""
-    return {"path": data_manager.pick_save_file(path)}
+    return {"path": browse.pick_save_file(path)}
+
+@app.get("/api/fs/pick_dataset_folder")
+def fs_pick_dataset_folder(path: str = ""):
+    """Open a dialog for picking a dataset folder, showing its Q&A/text files
+    so you can confirm you're browsing into the right place."""
+    return {"path": browse.pick_folder_by_browsing_files(path)}
 
 @app.get("/api/dataset/preview")
 def dataset_preview(path: str = ""):
@@ -186,51 +209,37 @@ def dataset_preview(path: str = ""):
     return data_manager.preview_qa_file(path)
 
 @app.post("/api/dataset/add")
+@api_errors
 def dataset_add(body: DatasetQaBody):
-    try:
-        data_manager.append_qa_pair_to_file(body.target_path, body.question, body.answer)
-    except Exception as exc:  # noqa: BLE001
-        return {"ok": False, "error": str(exc)}
-
+    data_manager.append_qa_pair_to_file(body.target_path, body.question, body.answer)
     config.update_settings({"dataset_target_file": body.target_path})
-    preview = data_manager.preview_qa_file(body.target_path)
-    return {"ok": True, "target_path": body.target_path, **preview}
+    return {"ok": True, "target_path": body.target_path, **data_manager.preview_qa_file(body.target_path)}
 
 @app.post("/api/dataset/update")
+@api_errors
 def dataset_update(body: DatasetUpdateBody):
     """Save an edited Q&A pair."""
-    try:
-        data_manager.update_qa_pair(body.target_path, body.index, body.question, body.answer)
-    except Exception as exc:  # noqa: BLE001
-        return {"ok": False, "error": str(exc)}
-
-    preview = data_manager.preview_qa_file(body.target_path)
-    return {"ok": True, **preview}
+    data_manager.update_qa_pair(body.target_path, body.index, body.question, body.answer)
+    return {"ok": True, **data_manager.preview_qa_file(body.target_path)}
 
 @app.post("/api/dataset/delete")
+@api_errors
 def dataset_delete(body: DatasetDeleteBody):
-    try:
-        data_manager.delete_qa_pair(body.target_path, body.index)
-    except Exception as exc:  # noqa: BLE001
-        return {"ok": False, "error": str(exc)}
-
-    preview = data_manager.preview_qa_file(body.target_path)
-    return {"ok": True, **preview}
+    data_manager.delete_qa_pair(body.target_path, body.index)
+    return {"ok": True, **data_manager.preview_qa_file(body.target_path)}
 
 @app.post("/api/finetune/select_model")
 def select_finetune_model(body: PathBody):
     if not model_manager.is_valid_model_folder(body.path):
-        return {"ok": False, "error": "That doesn't look like a valid model folder."}
+        return {"ok": False, "error": messages.INVALID_MODEL_FOLDER}
     config.update_settings({"finetune": {"model_path": body.path}})
     return {"ok": True, "model_path": body.path}
 
 
 @app.post("/api/finetune/select_dataset")
+@api_errors
 def select_finetune_dataset(body: PathBody):
-    try:
-        summary = data_manager.dataset_summary(body.path)
-    except Exception as exc:  # noqa: BLE001
-        return {"ok": False, "error": str(exc)}
+    summary = data_manager.dataset_summary(body.path)
     config.update_settings({"finetune": {"dataset_path": body.path}})
     return {"ok": True, "dataset_path": body.path, **summary}
 
@@ -238,11 +247,11 @@ def select_finetune_dataset(body: PathBody):
 def train_finetune(body: FinetuneBody):
     settings = config.load_settings()
     if not settings["finetune"]["model_path"]:
-        return {"ok": False, "error": "Select a model to fine-tune first."}
+        return {"ok": False, "error": messages.SELECT_MODEL_TO_FINETUNE}
     if not settings["finetune"]["dataset_path"]:
-        return {"ok": False, "error": "Select a dataset first."}
+        return {"ok": False, "error": messages.SELECT_DATASET_FIRST}
     if job["running"]:
-        return {"ok": False, "error": "A training job is already running."}
+        return {"ok": False, "error": messages.TRAINING_ALREADY_RUNNING}
 
     patch = {k: v for k, v in body.model_dump().items() if v is not None}
     settings = config.update_settings({"finetune": patch})
@@ -268,26 +277,26 @@ def finalize_finetune(body: FinetuneFinalizeBody):
         running, mode, done, error = job["running"], job["mode"], job["done"], job["error"]
 
     if running:
-        return {"ok": False, "error": "Training is still running."}
+        return {"ok": False, "error": messages.TRAINING_STILL_RUNNING}
     if mode != "finetune" or not done:
-        return {"ok": False, "error": "No completed fine-tuning run to save."}
+        return {"ok": False, "error": messages.NO_COMPLETED_FINETUNE_RUN}
     if error:
-        return {"ok": False, "error": "The last training run failed; nothing to save."}
+        return {"ok": False, "error": messages.LAST_TRAINING_RUN_FAILED}
 
     settings = config.load_settings()
     staging_dir = os.path.abspath(settings["finetune"]["staging_dir"])
     if not os.path.isdir(staging_dir):
-        return {"ok": False, "error": "No staged model found."}
+        return {"ok": False, "error": messages.NO_STAGED_MODEL_FOUND}
 
     if body.replace:
         destination = settings["finetune"]["model_path"]
         if not destination:
-            return {"ok": False, "error": "No base model to replace."}
+            return {"ok": False, "error": messages.NO_BASE_MODEL_TO_REPLACE}
     else:
         destination = body.destination
 
     if not destination or not destination.strip():
-        return {"ok": False, "error": "Provide a destination path."}
+        return {"ok": False, "error": messages.PROVIDE_DESTINATION_PATH}
     destination = os.path.abspath(destination.strip())
 
     if os.path.isdir(destination):
@@ -303,17 +312,15 @@ def finalize_finetune(body: FinetuneFinalizeBody):
 @app.post("/api/rag/select_model")
 def select_rag_model(body: PathBody):
     if not model_manager.is_valid_model_folder(body.path):
-        return {"ok": False, "error": "That doesn't look like a valid model folder."}
+        return {"ok": False, "error": messages.INVALID_MODEL_FOLDER}
     config.update_settings({"rag": {"model_path": body.path}})
     return {"ok": True, "model_path": body.path}
 
 
 @app.post("/api/rag/select_dataset")
+@api_errors
 def select_rag_dataset(body: PathBody):
-    try:
-        summary = data_manager.dataset_summary(body.path)
-    except Exception as exc:  # noqa: BLE001
-        return {"ok": False, "error": str(exc)}
+    summary = data_manager.dataset_summary(body.path)
     config.update_settings({"rag": {"dataset_path": body.path}})
     return {"ok": True, "dataset_path": body.path, **summary}
 
@@ -321,11 +328,11 @@ def select_rag_dataset(body: PathBody):
 def train_rag(body: RagBody):
     settings = config.load_settings()
     if not settings["rag"]["model_path"]:
-        return {"ok": False, "error": "Select a model for RAG first."}
+        return {"ok": False, "error": messages.SELECT_MODEL_FOR_RAG}
     if not settings["rag"]["dataset_path"]:
-        return {"ok": False, "error": "Select a dataset first."}
+        return {"ok": False, "error": messages.SELECT_DATASET_FIRST}
     if job["running"]:
-        return {"ok": False, "error": "A training job is already running."}
+        return {"ok": False, "error": messages.TRAINING_ALREADY_RUNNING}
 
     patch = {k: v for k, v in body.model_dump().items() if v is not None}
     settings = config.update_settings({"rag": patch})
@@ -356,7 +363,7 @@ def train_status():
 @app.post("/api/chat/select_model")
 def select_chat_model(body: PathBody):
     if not model_manager.is_valid_model_folder(body.path):
-        return {"ok": False, "error": "That doesn't look like a valid model folder."}
+        return {"ok": False, "error": messages.INVALID_MODEL_FOLDER}
     config.update_settings({"chat_model_path": body.path})
     model_manager.clear_cache()
     chat_history.clear()  # a new model shouldn't carry over the old conversation
@@ -365,11 +372,9 @@ def select_chat_model(body: PathBody):
 
 
 @app.post("/api/chat/device")
+@api_errors
 def select_chat_device(body: ChatDeviceBody):
-    try:
-        resolved = model_manager.get_device(body.device)
-    except ValueError as exc:
-        return {"ok": False, "error": str(exc)}
+    resolved = model_manager.get_device(body.device)
     config.update_settings({"chat_device": body.device})
     model_manager.clear_cache()
     return {"ok": True, "device": body.device, "resolved": resolved}
@@ -389,7 +394,7 @@ def set_chat_memory(body: ChatMemoryBody):
 def chat(body: ChatBody):
     with chat_lock:
         if chat_job["active"]:
-            return {"ok": False, "error": "MySelf is still answering the previous question. Wait for it to finish or stop it first."}
+            return {"ok": False, "error": messages.ANSWER_IN_PROGRESS}
         stop_event = threading.Event()
         chat_job["active"] = True
         chat_job["stop_event"] = stop_event
@@ -399,7 +404,7 @@ def chat(body: ChatBody):
         model_path = settings.get("chat_model_path")
 
         if not model_path:
-            return {"ok": False, "error": "Select a model to chat with first."}
+            return {"ok": False, "error": messages.SELECT_CHAT_MODEL_FIRST}
 
         rag_index_dir = os.path.join(model_path, RAG_SUBDIR)
         device_preference = settings.get("chat_device", "auto")
@@ -493,7 +498,7 @@ def speech_voice_options():
 def set_chat_stt_model(body: ChatSttModelBody):
     """How accurate speech-to-text should be when you use the microphone."""
     if body.model_size not in speech.STT_MODEL_SIZES:
-        return {"ok": False, "error": "Unsupported STT model size."}
+        return {"ok": False, "error": messages.UNSUPPORTED_STT_MODEL_SIZE}
     config.update_settings({"chat_stt_model_size": body.model_size})
     return {"ok": True, "model_size": body.model_size}
 
@@ -502,7 +507,7 @@ def set_chat_stt_model(body: ChatSttModelBody):
 def set_chat_tts_engine(body: ChatTtsEngineBody):
     """Which voice engine reads replies out loud."""
     if body.engine not in speech.TTS_ENGINES:
-        return {"ok": False, "error": "Unsupported TTS engine."}
+        return {"ok": False, "error": messages.UNSUPPORTED_TTS_ENGINE}
     config.update_settings({"chat_tts_engine": body.engine})
     return {"ok": True, "engine": body.engine}
 
@@ -526,7 +531,7 @@ def set_chat_audio_mode(body: ChatAudioModeBody):
 def set_chat_font_size(body: ChatFontSizeBody):
     """Remember the chosen chat text size."""
     if not 1 <= body.size <= 40:
-        return {"ok": False, "error": "Font size must be between 1 and 40."}
+        return {"ok": False, "error": messages.font_size_out_of_range()}
     config.update_settings({"chat_font_size": body.size})
     return {"ok": True, "size": body.size}
 
@@ -535,7 +540,7 @@ def set_chat_font_size(body: ChatFontSizeBody):
 def set_dataset_preview_font_size(body: DatasetPreviewFontSizeBody):
     """Remember the chosen Dataset preview text size."""
     if not 1 <= body.size <= 40:
-        return {"ok": False, "error": "Font size must be between 1 and 40."}
+        return {"ok": False, "error": messages.font_size_out_of_range()}
     config.update_settings({"dataset_preview_font_size": body.size})
     return {"ok": True, "size": body.size}
 
@@ -546,7 +551,7 @@ def set_cpu_threads(body: CpuThreadsBody):
     takes effect only after restarting the app."""
     total = os.cpu_count() or 1
     if body.threads is not None and not 1 <= body.threads <= total:
-        return {"ok": False, "error": f"Threads must be between 1 and {total}."}
+        return {"ok": False, "error": messages.threads_out_of_range(total)}
     config.update_settings({"cpu_threads": body.threads})
     model_manager.apply_cpu_thread_setting(body.threads)
     return {"ok": True, "threads": body.threads}
@@ -556,7 +561,7 @@ def set_cpu_threads(body: CpuThreadsBody):
 def set_chat_stt_language(body: ChatLanguageBody):
     """Which language you speak when using the microphone."""
     if body.language not in speech.LANGUAGES:
-        return {"ok": False, "error": "Unsupported language."}
+        return {"ok": False, "error": messages.UNSUPPORTED_LANGUAGE}
     config.update_settings({"chat_stt_language": body.language})
     return {"ok": True, "language": body.language}
 
@@ -566,7 +571,7 @@ def set_chat_tts_language(body: ChatLanguageBody):
     """Which language replies are translated into and read back in --
     can be different from the language you speak in."""
     if body.language not in speech.LANGUAGES:
-        return {"ok": False, "error": "Unsupported language."}
+        return {"ok": False, "error": messages.UNSUPPORTED_LANGUAGE}
     config.update_settings({"chat_tts_language": body.language})
     return {"ok": True, "language": body.language}
 

@@ -8,7 +8,9 @@ import json
 import os
 from threading import RLock
 
-HISTORY_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "chat_history.json")
+import config
+
+HISTORY_PATH = os.path.join(config.PROJECT_ROOT, "chat_history.json")
 
 _lock = RLock()
 

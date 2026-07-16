@@ -498,21 +498,24 @@ input:focus, textarea:focus, select:focus {
   margin-top: 0;
 }
 
-/* Live formatted preview shown under Question/Answer as you type. */
+/* Shows the Question/Answer you're currently typing, formatted, above the
+   saved-pairs list in the Preview pane. Hidden (via the .hidden class) when
+   both boxes are empty. */
 .dataset-live-preview {
-  margin-top: 6px;
-  padding: 10px 12px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--panel-2);
+  margin-bottom: 14px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--border);
   font-size: 13px;
-  min-height: 20px;
 }
 
-.dataset-live-preview:empty::before {
-  content: "Preview appears here as you type (Markdown, HTML, and LaTeX supported).";
+.dataset-live-preview::before {
+  content: "Draft preview";
+  display: block;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
   color: var(--text-dim);
-  font-style: italic;
+  margin-bottom: 6px;
 }
 
 /* Each Q&A pair in the Preview box, separated by a hairline. */

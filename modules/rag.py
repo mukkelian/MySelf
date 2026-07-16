@@ -15,7 +15,7 @@ import os
 import numpy as np
 from sentence_transformers import SentenceTransformer
 
-from . import model_manager
+from . import messages, model_manager
 
 _EMBEDDER_CACHE = {"name": None, "device": None, "model": None}
 
@@ -41,7 +41,7 @@ def build_index(
     entries += [{"type": "text", "text": t} for t in text_chunks]
 
     if not entries:
-        raise ValueError("No Q&A pairs or text found in the selected dataset folder.")
+        raise ValueError(messages.NO_QA_OR_TEXT_FOUND)
 
     device = model_manager.get_device(device_preference)
     os.makedirs(index_dir, exist_ok=True)

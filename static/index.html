@@ -87,6 +87,13 @@
               <button class="btn" id="browseChatModelBtn">Browse</button>
               <button class="btn primary" id="selectChatModelBtn">Use this model</button>
             </div>
+            <div class="hint">
+              Point this at the folder that directly holds the model's own
+              files (config.json, tokenizer files, model weights) -- not a
+              parent folder that just contains model folders inside it. The
+              folder browser only lists subfolders, so it'll look empty once
+              you're already inside the right one -- that's expected.
+            </div>
             <div class="hint" id="chatModelHint"></div>
 
             <label class="field-label" style="margin-top:14px">Compute device</label>
@@ -183,6 +190,13 @@
               <input type="text" id="ftModelPathInput" placeholder="/Users/you/models/tinyllama-1.1b" />
               <button class="btn" id="browseFtModelBtn">Browse</button>
               <button class="btn primary" id="selectFtModelBtn">Use this model</button>
+            </div>
+            <div class="hint">
+              Point this at the folder that directly holds the model's own
+              files (config.json, tokenizer files, model weights) -- not a
+              parent folder that just contains model folders inside it. The
+              folder browser only lists subfolders, so it'll look empty once
+              you're already inside the right one -- that's expected.
             </div>
             <div class="hint" id="ftModelHint"></div>
           </div>
@@ -291,6 +305,13 @@
               <button class="btn" id="browseRagModelBtn">Browse</button>
               <button class="btn primary" id="selectRagModelBtn">Use this model</button>
             </div>
+            <div class="hint">
+              Point this at the folder that directly holds the model's own
+              files (config.json, tokenizer files, model weights) -- not a
+              parent folder that just contains model folders inside it. The
+              folder browser only lists subfolders, so it'll look empty once
+              you're already inside the right one -- that's expected.
+            </div>
             <div class="hint" id="ragModelHint"></div>
           </div>
 
@@ -313,11 +334,27 @@
               <div class="grid-2">
                 <div>
                   <label class="field-label">Embedding model</label>
-                  <input type="text" id="ragEmbed" value="sentence-transformers/all-MiniLM-L6-v2" />
+                  <div class="path-row">
+                    <input type="text" id="ragEmbed" value="sentence-transformers/all-MiniLM-L6-v2" />
+                    <button class="btn" id="browseRagEmbedBtn">Browse</button>
+                  </div>
+                  <div class="hint">
+                    Turns each Q&amp;A pair and note into a form that captures its
+                    meaning, so similar entries can be found later even if they
+                    don't share the same words. The default works well for most
+                    uses -- type any other Hugging Face model id, or browse to a
+                    local model folder, to use a different one.
+                  </div>
                 </div>
                 <div>
                   <label class="field-label">Top-K retrieved pairs</label>
                   <input type="number" id="ragTopK" value="3" min="1" />
+                  <div class="hint">
+                    How many of the closest-matching entries get handed to the
+                    model as context for each question. Higher means more
+                    context, but also more chance of a less-relevant entry
+                    sneaking in.
+                  </div>
                 </div>
                 <div>
                   <label class="field-label">Compute device</label>
@@ -360,12 +397,10 @@
           <div class="hint" id="datasetTargetFileHint">No file selected.</div>
 
           <label class="field-label" style="margin-top:14px">Question</label>
-          <textarea id="datasetQuestion" rows="2" placeholder="What's your favorite programming language? Markdown, HTML, and LaTeX ($...$) all render below as you type."></textarea>
-          <div class="dataset-live-preview" id="datasetQuestionPreview"></div>
+          <textarea id="datasetQuestion" rows="2" placeholder="What's your favorite programming language? Paste or type freely - see it formatted in the Preview pane on the right."></textarea>
 
           <label class="field-label" style="margin-top:14px">Answer</label>
           <textarea id="datasetAnswer" rows="3" placeholder="Python, for how quickly I can go from idea to working code."></textarea>
-          <div class="dataset-live-preview" id="datasetAnswerPreview"></div>
 
           <div class="path-row" id="datasetAddRow">
             <button class="btn primary big" id="datasetAddBtn">Add Q&amp;A pair</button>
@@ -383,6 +418,7 @@
               <label for="datasetPreviewFontSize" class="chat-toolbar-label">Text size</label>
               <select id="datasetPreviewFontSize" title="Preview text size (px)"></select>
             </div>
+            <div class="dataset-live-preview hidden" id="datasetDraftPreview"></div>
             <div id="datasetPreview">No file to preview.</div>
           </div>
         </aside>
@@ -396,6 +432,7 @@
 <script src="/static/vendor/purify.min.js"></script>
 <script src="/static/vendor/katex.min.js"></script>
 <script src="/static/vendor/auto-render.min.js"></script>
+<script src="/static/messages.js"></script>
 <script src="/static/script.js"></script>
 </body>
 </html>

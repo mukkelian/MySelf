@@ -17,7 +17,7 @@ from transformers import (
     TrainingArguments,
 )
 
-from . import model_manager
+from . import messages, model_manager
 
 PROMPT_TEMPLATE = "Question: {question}\nAnswer: {answer}"
 
@@ -56,7 +56,7 @@ def train(model_path: str, qa_pairs: list, text_chunks: list, params: dict, log=
     much faster, then blended back into the model before saving.
     """
     if not qa_pairs and not text_chunks:
-        raise ValueError("No Q&A pairs or text found in the selected dataset folder.")
+        raise ValueError(messages.NO_QA_OR_TEXT_FOUND)
 
     full_finetune = bool(params.get("full_finetune"))
 

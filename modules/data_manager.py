@@ -1,119 +1,38 @@
 """
-Handles reading, saving, editing, and browsing your Q&A files and notes.
-Q&A pairs can be stored as .json, .jsonl, or .csv; plain notes can be .txt
-or .md files, and get split into smaller chunks for training/search.
+Handles reading, saving, and editing your Q&A files and notes. Q&A pairs can
+be stored as .json, .jsonl, or .csv; plain notes can be .txt or .md files,
+and get split into smaller chunks for training/search. Opening the native
+Browse window itself lives in `modules/browse.py`.
 """
 
-import contextlib
 import csv
 import json
 import os
-import shutil
-import subprocess
+
+from . import messages
 
 SUPPORTED_EXTENSIONS = (".json", ".jsonl", ".csv")
 TEXT_EXTENSIONS = (".txt", ".md")
 
 
-@contextlib.contextmanager
-def _tk_root():
-    """A hidden helper window needed to open a native file dialog."""
-    import tkinter as tk
-
-    root = tk.Tk()
-    root.withdraw()
-    root.attributes("-topmost", True)
-    try:
-        yield root
-    finally:
-        root.destroy()
+def _require_dataset_folder(dataset_path: str) -> None:
+    if not os.path.isdir(dataset_path):
+        raise ValueError(messages.dataset_folder_not_found(dataset_path))
 
 
-def pick_folder(initial_dir: str = "") -> str | None:
-    """Open a folder picker window and return the folder the user chose (or None if they cancelled)."""
-    initial_dir = os.path.abspath(initial_dir) if initial_dir and os.path.isdir(initial_dir) else os.path.expanduser("~")
-
-    try:
-        from tkinter import filedialog
-        with _tk_root():
-            selected = filedialog.askdirectory(initialdir=initial_dir, title="Select a folder")
-        return selected or None
-    except ImportError:
-        pass
-    if shutil.which("zenity"):
-        result = subprocess.run(
-            ["zenity", "--file-selection", "--directory", "--title=Select a folder",
-             f"--filename={initial_dir}/"],
-            capture_output=True, text=True,
-        )
-        return result.stdout.strip() or None if result.returncode == 0 else None
-
-    if shutil.which("kdialog"):
-        result = subprocess.run(
-            ["kdialog", "--getexistingdirectory", initial_dir],
-            capture_output=True, text=True,
-        )
-        return result.stdout.strip() or None if result.returncode == 0 else None
-
-    return None
+def _require_question_and_answer(question: str, answer: str) -> None:
+    if not question.strip() or not answer.strip():
+        raise ValueError(messages.QUESTION_AND_ANSWER_REQUIRED)
 
 
-def _resolve_initial_dir(path: str) -> str:
-    """Figure out which folder a file dialog should open in, falling back to the home folder."""
-    if path and os.path.isdir(path):
-        return os.path.abspath(path)
-    if path and os.path.isfile(path):
-        return os.path.dirname(os.path.abspath(path))
-    return os.path.expanduser("~")
+def _require_supported_extension(full_path: str) -> None:
+    if os.path.splitext(full_path)[1].lower() not in SUPPORTED_EXTENSIONS:
+        raise ValueError(messages.unsupported_dataset_file(os.path.basename(full_path)))
 
 
-def _ensure_supported_extension(path: str | None) -> str | None:
-    """If the user typed a filename with no extension at all, default it to .json."""
-    if not path or os.path.splitext(path)[1]:
-        return path
-    return path + ".json"
-
-
-def pick_save_file(initial_path: str = "") -> str | None:
-    """Open the Browse dialog for choosing or creating a Q&A file."""
-    initial_dir = _resolve_initial_dir(initial_path)
-
-    try:
-        from tkinter import filedialog
-        with _tk_root():
-            selected = filedialog.asksaveasfilename(
-                initialdir=initial_dir, title="Choose or create a Q&A file",
-                filetypes=[("JSON", "*.json"), ("JSON Lines", "*.jsonl"), ("CSV", "*.csv"), ("All files", "*.*")],
-                defaultextension=".json",
-            )
-        return _ensure_supported_extension(selected or None)
-    except ImportError:
-        pass
-
-    if shutil.which("zenity"):
-        result = subprocess.run(
-            ["zenity", "--file-selection", "--save", "--title=Choose or create a Q&A file",
-             f"--filename={initial_dir}/",
-             "--file-filter=JSON (*.json) | *.json",
-             "--file-filter=JSON Lines (*.jsonl) | *.jsonl",
-             "--file-filter=CSV (*.csv) | *.csv",
-             "--file-filter=All Q&A files | *.json *.jsonl *.csv",
-             "--file-filter=All files (*) | *"],
-            capture_output=True, text=True,
-        )
-        path = result.stdout.strip() or None if result.returncode == 0 else None
-        return _ensure_supported_extension(path)
-
-    if shutil.which("kdialog"):
-        result = subprocess.run(
-            ["kdialog", "--getsavefilename", initial_dir,
-             "*.json|JSON\n*.jsonl|JSON Lines\n*.csv|CSV\n*|All files (*)"],
-            capture_output=True, text=True,
-        )
-        path = result.stdout.strip() or None if result.returncode == 0 else None
-        return _ensure_supported_extension(path)
-
-    return None
+def _require_valid_index(pairs: list, index: int) -> None:
+    if not 0 <= index < len(pairs):
+        raise ValueError(messages.PAIR_NO_LONGER_EXISTS)
 
 
 def _load_json_file(full_path: str) -> list:
@@ -150,8 +69,7 @@ def _load_csv_file(full_path: str) -> list:
 
 def load_qa_pairs(dataset_path: str) -> list:
     """Load every Q&A pair found in the given folder (all supported files)."""
-    if not os.path.isdir(dataset_path):
-        raise ValueError(f"Dataset folder not found: {dataset_path}")
+    _require_dataset_folder(dataset_path)
 
     pairs = []
     for name in sorted(os.listdir(dataset_path)):
@@ -188,8 +106,7 @@ def _chunk_text(text: str, chunk_size: int, overlap: int) -> list:
 
 def load_text_chunks(dataset_path: str, chunk_size: int = 200, overlap: int = 40) -> list:
     """Load every .txt/.md file in the folder and split each into smaller pieces."""
-    if not os.path.isdir(dataset_path):
-        raise ValueError(f"Dataset folder not found: {dataset_path}")
+    _require_dataset_folder(dataset_path)
 
     chunks = []
     for name in sorted(os.listdir(dataset_path)):
@@ -233,16 +150,14 @@ def _append_csv_file(full_path: str, pair: dict) -> None:
 
 def append_qa_pair_to_file(full_path: str, question: str, answer: str) -> None:
     """Add one Q&A pair to the chosen file, creating the file first if it doesn't exist yet."""
-    if not question.strip() or not answer.strip():
-        raise ValueError("Both question and answer are required.")
+    _require_question_and_answer(question, answer)
 
     full_path = (full_path or "").strip()
     if not full_path:
-        raise ValueError("Choose a file to save to first (Save As or Browse).")
+        raise ValueError(messages.CHOOSE_FILE_FIRST)
 
     ext = os.path.splitext(full_path)[1].lower()
-    if ext not in SUPPORTED_EXTENSIONS:
-        raise ValueError(f"'{os.path.basename(full_path)}' is not a supported dataset file (.json/.jsonl/.csv).")
+    _require_supported_extension(full_path)
 
     os.makedirs(os.path.dirname(full_path) or ".", exist_ok=True)
 
@@ -288,23 +203,18 @@ def _load_pairs_for_edit(full_path: str) -> tuple[str, list]:
     """Check the file exists and is a supported type, then load its pairs."""
     full_path = (full_path or "").strip()
     if not full_path or not os.path.exists(full_path):
-        raise ValueError("That file no longer exists.")
+        raise ValueError(messages.FILE_NO_LONGER_EXISTS)
 
-    ext = os.path.splitext(full_path)[1].lower()
-    if ext not in SUPPORTED_EXTENSIONS:
-        raise ValueError(f"'{os.path.basename(full_path)}' is not a supported dataset file (.json/.jsonl/.csv).")
-
-    return ext, _load_pairs(full_path)
+    _require_supported_extension(full_path)
+    return os.path.splitext(full_path)[1].lower(), _load_pairs(full_path)
 
 
 def update_qa_pair(full_path: str, index: int, question: str, answer: str) -> None:
     """Replace one Q&A pair with edited text."""
-    if not question.strip() or not answer.strip():
-        raise ValueError("Both question and answer are required.")
+    _require_question_and_answer(question, answer)
 
     _, pairs = _load_pairs_for_edit(full_path)
-    if not 0 <= index < len(pairs):
-        raise ValueError("That Q&A pair no longer exists (the file may have changed).")
+    _require_valid_index(pairs, index)
 
     pairs[index] = {"question": question.strip(), "answer": answer.strip()}
     _write_pairs(full_path, pairs)
@@ -313,8 +223,7 @@ def update_qa_pair(full_path: str, index: int, question: str, answer: str) -> No
 def delete_qa_pair(full_path: str, index: int) -> None:
     """Remove one Q&A pair."""
     _, pairs = _load_pairs_for_edit(full_path)
-    if not 0 <= index < len(pairs):
-        raise ValueError("That Q&A pair no longer exists (the file may have changed).")
+    _require_valid_index(pairs, index)
 
     del pairs[index]
     _write_pairs(full_path, pairs)

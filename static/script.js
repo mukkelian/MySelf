@@ -10,6 +10,20 @@ const api = {
     }).then((r) => r.json()),
 };
 
+function setHint(hint, text, kind) {
+  hint.textContent = text;
+  hint.className = kind ? `hint ${kind}` : "hint";
+}
+
+// Saves a setting and shows how it went in the hint text underneath it.
+async function postWithHint(hintId, endpoint, body, { pending = MESSAGES.saving, onSuccess } = {}) {
+  const hint = document.getElementById(hintId);
+  setHint(hint, pending, null);
+  const res = await api.post(endpoint, body);
+  setHint(hint, res.ok ? (onSuccess ? onSuccess(res) : "Saved.") : res.error, res.ok ? "success" : "error");
+  return res;
+}
+
 // ---------------- Resizable panels ----------------
 // Dragging a divider resizes the panels next to it, and remembers your choice.
 function makeHorizontalResizer({ handleId, cssVar, min, max, storageKey, fromRight }) {
@@ -210,14 +224,23 @@ async function refreshStatus() {
   populateCpuThreadsSelect(totalThreads, physicalCores);
   document.getElementById("cpuThreads").value = settings.cpu_threads ?? "auto";
   document.getElementById("cpuThreadsHint").textContent =
-    `${totalThreads} thread${totalThreads === 1 ? "" : "s"} available on this machine.`;
+    `${pluralize(totalThreads, "thread")} available on this machine.`;
 }
 
-// ---------------- Native OS folder picker ----------------
-function wireBrowseButton(browseBtnId, inputId) {
+// ---------------- Native OS file/folder picker ----------------
+// "folder" is a plain folder picker (model folders). "dataset" browses
+// through files instead (so you can actually see what's in each folder,
+// filtered to Q&A/text file types) and uses the folder that held whichever
+// file you picked - the same Browse behaviour everywhere in MySelf.
+const BROWSE_ENDPOINTS = {
+  folder: "/api/fs/pick_folder",
+  dataset: "/api/fs/pick_dataset_folder",
+};
+
+function wireBrowseButton(browseBtnId, inputId, kind = "folder") {
   document.getElementById(browseBtnId).addEventListener("click", async () => {
     const inputEl = document.getElementById(inputId);
-    const res = await api.get(`/api/fs/pick_folder?path=${encodeURIComponent(inputEl.value || "")}`);
+    const res = await api.get(`${BROWSE_ENDPOINTS[kind]}?path=${encodeURIComponent(inputEl.value || "")}`);
     if (res.path) {
       inputEl.value = res.path;
       inputEl.dispatchEvent(new Event("change")); // so fields that save-on-change pick it up right away
@@ -227,28 +250,21 @@ function wireBrowseButton(browseBtnId, inputId) {
 
 function formatDatasetSummary(res) {
   const parts = [];
-  if (res.count) parts.push(`${res.count} Q&A pair${res.count === 1 ? "" : "s"}`);
-  if (res.text_chunk_count) parts.push(`${res.text_chunk_count} text chunk${res.text_chunk_count === 1 ? "" : "s"}`);
-  return parts.length ? `Loaded ${parts.join(" and ")}.` : "No Q&A pairs or text found in this folder.";
+  if (res.count) parts.push(pluralize(res.count, "Q&A pair"));
+  if (res.text_chunk_count) parts.push(pluralize(res.text_chunk_count, "text chunk"));
+  return parts.length ? `Loaded ${parts.join(" and ")}.` : MESSAGES.noPairsOrTextInFolder;
 }
 
 // Shared by the Fine-Tune, RAG, and Chat panels: pick a folder, save it, show a message.
-function wirePathSelect({ inputId, browseBtnId, selectBtnId, hintId, endpoint, onSuccess }) {
-  wireBrowseButton(browseBtnId, inputId);
+function wirePathSelect({ inputId, browseBtnId, selectBtnId, hintId, endpoint, onSuccess, browseKind }) {
+  wireBrowseButton(browseBtnId, inputId, browseKind);
 
   document.getElementById(selectBtnId).addEventListener("click", async () => {
     const path = document.getElementById(inputId).value.trim();
-    const hint = document.getElementById(hintId);
-    hint.textContent = "Checking...";
-    hint.className = "hint";
-    const res = await api.post(endpoint, { path });
-    if (res.ok) {
-      hint.textContent = onSuccess ? onSuccess(res) : `Model set: ${res.model_path}`;
-      hint.className = "hint success";
-    } else {
-      hint.textContent = res.error;
-      hint.className = "hint error";
-    }
+    await postWithHint(hintId, endpoint, { path }, {
+      pending: MESSAGES.checking,
+      onSuccess: onSuccess || ((res) => `Model set: ${res.model_path}`),
+    });
     refreshStatus();
   });
 }
@@ -268,6 +284,7 @@ wirePathSelect({
   hintId: "ftDatasetHint",
   endpoint: "/api/finetune/select_dataset",
   onSuccess: formatDatasetSummary,
+  browseKind: "dataset",
 });
 
 wirePathSelect({
@@ -285,6 +302,7 @@ wirePathSelect({
   hintId: "ragDatasetHint",
   endpoint: "/api/rag/select_dataset",
   onSuccess: formatDatasetSummary,
+  browseKind: "dataset",
 });
 
 wirePathSelect({
@@ -308,16 +326,16 @@ let datasetEditingIndex = null;
 function setDatasetTargetPath(path) {
   datasetTargetPath = path || null;
   document.getElementById("datasetTargetFileHint").textContent =
-    datasetTargetPath ? `Target file: ${datasetTargetPath}` : "No file selected.";
+    datasetTargetPath ? `Target file: ${datasetTargetPath}` : MESSAGES.noFileSelected;
 }
 
 function renderDatasetFilePreview(res) {
   const preview = document.getElementById("datasetPreview");
   preview.innerHTML = "";
   if (!datasetTargetPath) {
-    preview.textContent = "No file to preview.";
+    preview.textContent = MESSAGES.noFileToPreview;
   } else if (!res.count) {
-    preview.textContent = "No Q&A pairs in this file yet.";
+    preview.textContent = MESSAGES.noPairsInFile;
   } else {
     res.preview.forEach((pair, index) => {
       const item = document.createElement("div");
@@ -356,8 +374,7 @@ function enterDatasetEditMode(index, pair) {
   const answerEl = document.getElementById("datasetAnswer");
   questionEl.value = pair.question;
   answerEl.value = pair.answer;
-  updateDatasetQuestionPreview();
-  updateDatasetAnswerPreview();
+  updateDatasetDraftPreview();
   questionEl.focus();
 
   document.getElementById("datasetAddBtn").textContent = "Save changes";
@@ -378,31 +395,25 @@ document.getElementById("datasetCancelEditBtn").addEventListener("click", () => 
   const answerEl = document.getElementById("datasetAnswer");
   questionEl.value = "";
   answerEl.value = "";
-  updateDatasetQuestionPreview();
-  updateDatasetAnswerPreview();
+  updateDatasetDraftPreview();
   document.getElementById("datasetAddHint").textContent = "";
   refreshDatasetPreview();
 });
 
 async function deleteDatasetPair(index) {
-  if (!confirm("Delete this Q&A pair? This can't be undone.")) return;
+  if (!confirm(MESSAGES.confirmDeletePair)) return;
 
-  const hint = document.getElementById("datasetAddHint");
-  const res = await api.post("/api/dataset/delete", { target_path: datasetTargetPath, index });
+  const res = await postWithHint("datasetAddHint", "/api/dataset/delete", { target_path: datasetTargetPath, index }, {
+    onSuccess: (res) => `Deleted. File now has ${pluralize(res.count, "pair")}.`,
+  });
   if (res.ok) {
-    hint.textContent = `Deleted. File now has ${res.count} pair${res.count === 1 ? "" : "s"}.`;
-    hint.className = "hint success";
     if (datasetEditingIndex !== null) {
       exitDatasetEditMode();
       document.getElementById("datasetQuestion").value = "";
       document.getElementById("datasetAnswer").value = "";
-      updateDatasetQuestionPreview();
-      updateDatasetAnswerPreview();
+      updateDatasetDraftPreview();
     }
     renderDatasetFilePreview(res);
-  } else {
-    hint.textContent = res.error;
-    hint.className = "hint error";
   }
 }
 
@@ -413,25 +424,24 @@ async function refreshDatasetPreview() {
   renderDatasetFilePreview(res);
 }
 
-// Shows a live formatted preview under a Question/Answer box as you type.
-function wireDatasetLivePreview(textareaId, previewId) {
-  const textarea = document.getElementById(textareaId);
-  const preview = document.getElementById(previewId);
+// Shows the Question/Answer you're currently typing, formatted, in the
+// Preview pane on the right - the text boxes themselves always stay plain.
+function updateDatasetDraftPreview() {
+  const question = document.getElementById("datasetQuestion").value;
+  const answer = document.getElementById("datasetAnswer").value;
+  const draft = document.getElementById("datasetDraftPreview");
 
-  const update = () => {
-    if (textarea.value.trim()) {
-      renderFormattedContent(preview, textarea.value);
-    } else {
-      preview.innerHTML = "";
-    }
-  };
-
-  textarea.addEventListener("input", update);
-  return update;
+  if (!question.trim() && !answer.trim()) {
+    draft.innerHTML = "";
+    draft.classList.add("hidden");
+    return;
+  }
+  draft.classList.remove("hidden");
+  renderFormattedContent(draft, `**Q:** ${question}\n\n**A:** ${answer}`);
 }
 
-const updateDatasetQuestionPreview = wireDatasetLivePreview("datasetQuestion", "datasetQuestionPreview");
-const updateDatasetAnswerPreview = wireDatasetLivePreview("datasetAnswer", "datasetAnswerPreview");
+document.getElementById("datasetQuestion").addEventListener("input", updateDatasetDraftPreview);
+document.getElementById("datasetAnswer").addEventListener("input", updateDatasetDraftPreview);
 
 document.getElementById("datasetBrowseBtn").addEventListener("click", async () => {
   const res = await api.get(`/api/fs/pick_save_file?path=${encodeURIComponent(datasetTargetPath || "")}`);
@@ -451,46 +461,33 @@ document.getElementById("datasetAddBtn").addEventListener("click", async () => {
   const answer = answerEl.value.trim();
 
   if (!question || !answer) {
-    hint.textContent = "Both question and answer are required.";
-    hint.className = "hint error";
+    setHint(hint, MESSAGES.questionAndAnswerRequired, "error");
     return;
   }
   if (!datasetTargetPath) {
-    hint.textContent = "Choose a file first (Browse).";
-    hint.className = "hint error";
+    setHint(hint, MESSAGES.chooseFileFirst, "error");
     return;
   }
 
   const editing = datasetEditingIndex !== null;
-  hint.textContent = editing ? "Saving changes..." : "Saving...";
-  hint.className = "hint";
-  const res = editing
-    ? await api.post("/api/dataset/update", {
-        question,
-        answer,
-        target_path: datasetTargetPath,
-        index: datasetEditingIndex,
-      })
-    : await api.post("/api/dataset/add", {
-        question,
-        answer,
-        target_path: datasetTargetPath,
-      });
+  const endpoint = editing ? "/api/dataset/update" : "/api/dataset/add";
+  const body = editing
+    ? { question, answer, target_path: datasetTargetPath, index: datasetEditingIndex }
+    : { question, answer, target_path: datasetTargetPath };
+
+  const res = await postWithHint("datasetAddHint", endpoint, body, {
+    pending: editing ? "Saving changes..." : MESSAGES.saving,
+    onSuccess: (res) => editing
+      ? `Changes saved. File now has ${pluralize(res.count, "pair")}.`
+      : `Saved to ${res.target_path}. File now has ${pluralize(res.count, "pair")}.`,
+  });
 
   if (res.ok) {
-    hint.textContent = editing
-      ? `Changes saved. File now has ${res.count} pair${res.count === 1 ? "" : "s"}.`
-      : `Saved to ${res.target_path}. File now has ${res.count} pair${res.count === 1 ? "" : "s"}.`;
-    hint.className = "hint success";
     if (editing) exitDatasetEditMode();
     questionEl.value = "";
     answerEl.value = "";
-    updateDatasetQuestionPreview();
-    updateDatasetAnswerPreview();
+    updateDatasetDraftPreview();
     renderDatasetFilePreview(res);
-  } else {
-    hint.textContent = res.error;
-    hint.className = "hint error";
   }
 });
 
@@ -526,7 +523,7 @@ function startPolling(logElId, onDone) {
   pollTimer = setInterval(async () => {
     const status = await api.get("/api/train/status");
     const logEl = document.getElementById(logElId);
-    logEl.textContent = status.logs.length ? status.logs.join("\n") : "Idle.";
+    logEl.textContent = status.logs.length ? status.logs.join("\n") : MESSAGES.idle;
     logEl.scrollTop = logEl.scrollHeight;
     if (!status.running) {
       clearInterval(pollTimer);
@@ -558,7 +555,7 @@ document.getElementById("startFinetuneBtn").addEventListener("click", async () =
     logEl.textContent = "ERROR: " + res.error;
     return;
   }
-  logEl.textContent = "Starting...";
+  logEl.textContent = MESSAGES.starting;
   startPolling("finetuneLog", (status) => {
     if (status.done && !status.error) {
       document.getElementById("ftCompleteCard").classList.remove("hidden");
@@ -567,27 +564,19 @@ document.getElementById("startFinetuneBtn").addEventListener("click", async () =
 });
 
 async function finalizeFinetune(body) {
-  const hint = document.getElementById("ftFinalizeHint");
-  hint.textContent = "Saving...";
-  hint.className = "hint";
-  const res = await api.post("/api/train/finetune/finalize", body);
+  const res = await postWithHint("ftFinalizeHint", "/api/train/finetune/finalize", body, {
+    onSuccess: (res) => `Saved to ${res.saved_to}.`,
+  });
   if (res.ok) {
-    hint.textContent = `Saved to ${res.saved_to}.`;
-    hint.className = "hint success";
     document.getElementById("ftCompleteCard").classList.add("hidden");
     refreshStatus();
-  } else {
-    hint.textContent = res.error;
-    hint.className = "hint error";
   }
 }
 
 document.getElementById("ftSaveHereBtn").addEventListener("click", () => {
   const destination = document.getElementById("ftSaveDestInput").value.trim();
   if (!destination) {
-    const hint = document.getElementById("ftFinalizeHint");
-    hint.textContent = "Enter a destination path.";
-    hint.className = "hint error";
+    setHint(document.getElementById("ftFinalizeHint"), MESSAGES.enterDestinationPath, "error");
     return;
   }
   finalizeFinetune({ destination });
@@ -607,39 +596,24 @@ document.getElementById("startRagBtn").addEventListener("click", async () => {
     logEl.textContent = "ERROR: " + res.error;
     return;
   }
-  logEl.textContent = "Starting...";
+  logEl.textContent = MESSAGES.starting;
   startPolling("ragLog");
 });
 
 // Chat: compute device
 document.getElementById("chatDevice").addEventListener("change", async () => {
   const device = document.getElementById("chatDevice").value;
-  const hint = document.getElementById("chatDeviceHint");
-  hint.textContent = "Saving...";
-  hint.className = "hint";
-  const res = await api.post("/api/chat/device", { device });
-  if (res.ok) {
-    hint.textContent = `Chat will use: ${res.resolved}`;
-    hint.className = "hint success";
-  } else {
-    hint.textContent = res.error;
-    hint.className = "hint error";
-  }
+  await postWithHint("chatDeviceHint", "/api/chat/device", { device }, {
+    onSuccess: (res) => `Chat will use: ${res.resolved}`,
+  });
 });
 
 // Chat: conversation memory + response length
-async function saveChatMemorySetting(field, value) {
-  const hint = document.getElementById("chatMemoryHint");
-  hint.textContent = "Saving...";
-  hint.className = "hint";
-  const res = await api.post("/api/chat/memory", { [field]: value });
-  if (res.ok) {
-    hint.textContent = `Memory: last ${res.history_turns} turn${res.history_turns === 1 ? "" : "s"}, up to ${res.max_new_tokens} tokens per reply.`;
-    hint.className = "hint success";
-  } else {
-    hint.textContent = res.error;
-    hint.className = "hint error";
-  }
+function saveChatMemorySetting(field, value) {
+  return postWithHint("chatMemoryHint", "/api/chat/memory", { [field]: value }, {
+    onSuccess: (res) =>
+      `Memory: last ${pluralize(res.history_turns, "turn")}, up to ${res.max_new_tokens} tokens per reply.`,
+  });
 }
 
 document.getElementById("chatHistoryTurns").addEventListener("change", (e) => {
@@ -690,17 +664,9 @@ async function loadSpeechLanguages() {
 function wireChatLanguageSelect(selectId, endpoint, label) {
   document.getElementById(selectId).addEventListener("change", async () => {
     const select = document.getElementById(selectId);
-    const hint = document.getElementById("chatLanguageHint");
-    hint.textContent = "Saving...";
-    hint.className = "hint";
-    const res = await api.post(endpoint, { language: select.value });
-    if (res.ok) {
-      hint.textContent = `${label}: ${select.selectedOptions[0].textContent}.`;
-      hint.className = "hint success";
-    } else {
-      hint.textContent = res.error;
-      hint.className = "hint error";
-    }
+    await postWithHint("chatLanguageHint", endpoint, { language: select.value }, {
+      onSuccess: () => `${label}: ${select.selectedOptions[0].textContent}.`,
+    });
   });
 }
 
@@ -710,35 +676,25 @@ wireChatLanguageSelect("chatTtsLanguage", "/api/chat/tts_language", "Hear replie
 // Chat: speech-to-text accuracy, voice engine, translation model override
 document.getElementById("chatSttModel").addEventListener("change", async () => {
   const select = document.getElementById("chatSttModel");
-  const hint = document.getElementById("chatVoiceHint");
-  hint.textContent = "Saving...";
-  hint.className = "hint";
-  const res = await api.post("/api/chat/stt_model", { model_size: select.value });
-  hint.textContent = res.ok ? `Speech-to-text model: ${select.selectedOptions[0].textContent}.` : res.error;
-  hint.className = res.ok ? "hint success" : "hint error";
+  await postWithHint("chatVoiceHint", "/api/chat/stt_model", { model_size: select.value }, {
+    onSuccess: () => `Speech-to-text model: ${select.selectedOptions[0].textContent}.`,
+  });
 });
 
 document.getElementById("chatTtsEngine").addEventListener("change", async () => {
   const select = document.getElementById("chatTtsEngine");
-  const hint = document.getElementById("chatVoiceHint");
-  hint.textContent = "Saving...";
-  hint.className = "hint";
-  const res = await api.post("/api/chat/tts_engine", { engine: select.value });
-  hint.textContent = res.ok ? `Text-to-speech engine: ${select.selectedOptions[0].textContent}.` : res.error;
-  hint.className = res.ok ? "hint success" : "hint error";
+  await postWithHint("chatVoiceHint", "/api/chat/tts_engine", { engine: select.value }, {
+    onSuccess: () => `Text-to-speech engine: ${select.selectedOptions[0].textContent}.`,
+  });
 });
 
 wireBrowseButton("browseChatTranslateModelBtn", "chatTranslateModel");
+wireBrowseButton("browseRagEmbedBtn", "ragEmbed");
 
 document.getElementById("chatTranslateModel").addEventListener("change", async (e) => {
-  const hint = document.getElementById("chatTranslateModelHint");
-  hint.textContent = "Saving...";
-  hint.className = "hint";
-  const res = await api.post("/api/chat/translate_model", { model: e.target.value.trim() });
-  hint.textContent = res.ok
-    ? (res.model ? `Translation model: ${res.model}.` : "Using default per-language translation model.")
-    : res.error;
-  hint.className = res.ok ? "hint success" : "hint error";
+  await postWithHint("chatTranslateModelHint", "/api/chat/translate_model", { model: e.target.value.trim() }, {
+    onSuccess: (res) => (res.model ? `Translation model: ${res.model}.` : MESSAGES.usingDefaultTranslateModel),
+  });
 });
 
 // Chat: clears the saved conversation, on the server and on screen.
@@ -774,11 +730,33 @@ function appendBubble(text, who) {
   return bubble;
 }
 
+marked.use({ breaks: true });
+
+// Plain pasted text often has stray leading spaces on some lines (copied
+// from a PDF or a job listing, say). Markdown treats 4+ leading spaces as a
+// code block, which turns ordinary pasted paragraphs into an unreadable,
+// horizontally-scrolling box. This caps accidental indentation everywhere
+// except inside real ``` fenced code blocks, so pasted plain text displays
+// the way it was pasted, while genuine code snippets stay untouched.
+function capAccidentalIndentation(text) {
+  let inFence = false;
+  return text
+    .split("\n")
+    .map((line) => {
+      if (/^\s{0,3}(```|~~~)/.test(line)) {
+        inFence = !inFence;
+        return line;
+      }
+      return inFence ? line : line.replace(/^[ \t]{4,}/, "   ");
+    })
+    .join("\n");
+}
+
 // Turns Markdown/HTML/LaTeX text into safely-formatted content on the page.
 // Used for chat replies, the Dataset preview, and its live Question/Answer previews.
 function renderFormattedContent(el, text) {
   el.classList.add("rendered-content");
-  el.innerHTML = DOMPurify.sanitize(marked.parse(text));
+  el.innerHTML = DOMPurify.sanitize(marked.parse(capAccidentalIndentation(text)));
   if (window.renderMathInElement) {
     renderMathInElement(el, { throwOnError: false });
   }
@@ -866,7 +844,7 @@ function addSpeakButton(bubble, text) {
       const contentType = res.headers.get("content-type") || "";
       if (!contentType.includes("audio")) {
         const err = await res.json();
-        throw new Error(err.error || "Speech synthesis failed.");
+        throw new Error(err.error || MESSAGES.speechSynthesisFailed);
       }
       const blob = await res.blob();
       const url = URL.createObjectURL(blob);
@@ -986,7 +964,7 @@ async function sendChat(question, questionDisplay) {
       if (res.stopped) {
         const note = document.createElement("span");
         note.className = "stopped-note";
-        note.textContent = "Generation stopped early.";
+        note.textContent = MESSAGES.generationStoppedEarly;
         thinkingBubble.appendChild(note);
       } else if (res.answer_display && audioModeEnabled) {
         speak.play();
@@ -1029,7 +1007,7 @@ async function toggleMic() {
   try {
     stream = await navigator.mediaDevices.getUserMedia({ audio: true });
   } catch (err) {
-    alert("Microphone access was denied or is unavailable.");
+    alert(MESSAGES.micDenied);
     return;
   }
 
@@ -1066,7 +1044,7 @@ async function handleRecordedAudio() {
     if (res.ok && res.text_en) {
       sendChat(res.text_en, res.text_display);
     } else if (res.ok) {
-      alert("Didn't catch any speech -- please try again.");
+      alert(MESSAGES.noSpeechCaught);
     } else {
       alert("Transcription failed: " + res.error);
     }
