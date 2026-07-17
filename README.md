@@ -118,10 +118,18 @@ Either way, once you have a folder on disk, point any panel's model field
     stops (and cancels, if still being synthesized) any audio tied to it.
   - Adjustable **chat text size** (a 1–40px dropdown) applied to the
     whole chat log at once, next to "Clear chat".
-  - **Conversation memory is persisted server-side** (`chat_history.json`),
+  - **Conversation memory is persisted server-side** (`chat_history.enc`),
     not just held in the browser tab — it survives page reloads and server
     restarts, and the visible chat log restores itself from it on load.
     Cleared automatically when you switch chat models, or via "Clear chat".
+  - **Locked behind a key you choose.** Every time you load the dashboard,
+    Chat starts locked behind an overlay asking for a key (any word or
+    phrase) before you can send a message or see any saved conversation.
+    The same key unlocks the same conversation next time; a different key
+    (or a fresh start with no saved conversation yet) begins a new one.
+    Forgot your key? There's no way to recover the old conversation without
+    it — click "Forgot your key? Clear the chat" to wipe it and start over.
+    See "Chat encryption" below for how this is implemented.
 - **Fixed, non-resizable layout**: each panel (Dataset / Fine-Tune / RAG /
   Chat) always fills the full window, and the Chat panel's settings card
   always fills the full height next to the chat box — nothing is dragged
@@ -217,13 +225,16 @@ Open **http://127.0.0.1:8000** in your browser.
    click "Use this model." Set the embedding model and top-K, click
    "Build RAG index." The index files are saved into `<model folder>/rag_index/`,
    right alongside that model (no weights change).
-4. **Chat** — everything for this panel (model, device, memory, audio mode,
-   voice languages, STT/TTS/translation choices) lives in one sidebar card
-   docked to the right of the chat box, at a fixed full height (drag the
-   hidden vertical line between them to resize its width). Pick a model the
-   same way as the other panels; if that model folder has a `rag_index/`
-   next to it (built in step 3), MySelf automatically retrieves context and
-   answers with it, otherwise it just generates directly. Adjust
+4. **Chat** — first, enter a key (any word or phrase) in the overlay to
+   unlock the chat box — this both decrypts your saved conversation (if any)
+   and locks new messages behind that same key going forward. Everything for
+   this panel (model, device, memory, audio mode, voice languages,
+   STT/TTS/translation choices) lives in one sidebar card docked to the
+   right of the chat box, at a fixed full height (drag the hidden vertical
+   line between them to resize its width). Pick a model the same way as the
+   other panels; if that model folder has a `rag_index/` next to it (built
+   in step 3), MySelf automatically retrieves context and answers with it,
+   otherwise it just generates directly. Adjust
    **conversation memory** (how many previous turns are sent as context, 0
    to disable) and the **max reply length**. Only one question is answered
    at a time — Send is disabled while a reply is generating, and **Stop**
@@ -324,14 +335,27 @@ PyTorch has no API to un-cap its own thread pool once
 again on the next `python app.py` start.
 
 **Conversation memory**: every turn (English + translated-display text,
-both question and answer) is appended to `chat_history.json` at the
-project root after each reply — see `modules/chat_history.py`. It's kept
-as plain JSON, not encrypted: this app has no login/auth system, so any
-encryption key would have to live on the same disk right next to the data
-it protects, which mainly stops someone from casually opening the file in
-a text editor rather than providing real confidentiality. Given that
-limited benefit, encryption was left out for now rather than add
-complexity for a false sense of security.
+both question and answer) is appended to `chat_history.enc` at the project
+root after each reply — see `modules/chat_history.py`. It's encrypted (see
+"Chat encryption" below), so the file on disk is unreadable without the key
+you unlocked it with, even to someone else who can browse this computer's
+files.
+
+**Chat encryption**: the Chat panel starts locked every time you load the
+dashboard — you can't send a message or see any saved conversation until
+you enter a key (any word or phrase). That key, combined with a random
+salt stored alongside the data, derives an AES encryption key via PBKDF2
+(390,000 iterations, `cryptography`'s `Fernet`); the whole conversation is
+encrypted with it before being written to `chat_history.enc`. The key
+itself is never written to disk — only kept in the server's memory for as
+long as the chat stays unlocked, and forgotten again on "Clear chat" or a
+server restart, which is why you're asked for it every time you start
+chatting, not just the first time. There's no password reset: a wrong key
+is simply rejected, and the only way past a forgotten one is "Forgot your
+key? Clear the chat," which deletes the encrypted file entirely so a new
+key can start a fresh conversation. This only covers the chat
+conversation — other saved state (`settings.json`, your dataset files,
+model folders) is unaffected and stored as before.
 
 ## Notes & limits
 

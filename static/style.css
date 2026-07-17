@@ -594,7 +594,57 @@ input:focus, textarea:focus, select:focus {
   min-height: 0;
 }
 
-.chat-card { display: flex; flex-direction: column; flex: 1; min-width: 0; min-height: 0; }
+.chat-card { position: relative; display: flex; flex-direction: column; flex: 1; min-width: 0; min-height: 0; }
+
+/* Covers the chat log/input until you enter your key, so no saved
+   conversation is visible (or usable) without it. */
+.chat-lock-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(15, 17, 21, 0.92);
+  border-radius: inherit;
+}
+
+/* .hidden alone can't win against .chat-lock-overlay's own "display: flex"
+   at equal specificity, so this pairing needs to be spelled out directly. */
+.chat-lock-overlay.hidden {
+  display: none;
+}
+
+.chat-lock-box {
+  width: min(360px, 90%);
+  padding: 24px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  text-align: center;
+}
+
+.chat-lock-box h2 {
+  margin: 0 0 8px;
+  font-size: 18px;
+}
+
+.chat-lock-box p {
+  margin: 0 0 16px;
+  color: var(--text-dim);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.chat-lock-box input {
+  margin-bottom: 12px;
+  text-align: center;
+}
+
+.chat-lock-box .btn.danger {
+  margin-top: 16px;
+  width: 100%;
+}
 
 .chat-sidebar {
   flex: 0 0 var(--chat-sidebar-width);

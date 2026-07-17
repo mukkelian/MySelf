@@ -697,24 +697,75 @@ document.getElementById("chatTranslateModel").addEventListener("change", async (
   });
 });
 
-// Chat: clears the saved conversation, on the server and on screen.
-async function clearChat() {
-  document.getElementById("chatLog").innerHTML = "";
-  await api.post("/api/chat/clear", {});
+// Chat: locked behind a key until you unlock it, so the saved conversation
+// on disk is never readable (or usable) without it.
+let chatUnlocked = false;
+let chatIsNewSession = false;
+
+async function showChatLockOverlay() {
+  chatUnlocked = false;
+  document.getElementById("chatLockOverlay").classList.remove("hidden");
+  document.getElementById("chatKeyInput").value = "";
+  document.getElementById("chatKeyHint").textContent = "";
+
+  // A saved conversation already exists -> ask for its key to unlock it.
+  // Nothing saved yet -> this key is starting a brand new one.
+  const { exists } = await api.get("/api/chat/session_exists");
+  chatIsNewSession = !exists;
+  document.getElementById("chatLockHeading").textContent = exists ? "Enter your chat key" : "Start a new chat";
+  document.getElementById("chatLockDescription").textContent = exists
+    ? "This key locks your saved conversation on disk. Use the same key each time to keep talking in the same conversation, or clear the chat to wipe it and start fresh with a new key."
+    : "Choose a key to lock this new conversation. Enter the same key again next time you want to keep talking in it.";
+  document.getElementById("chatUnlockBtn").textContent = exists ? "Unlock chat" : "Start chat";
+  document.getElementById("chatForgotKeyBtn").classList.toggle("hidden", !exists);
 }
 
-// On page load, show whatever conversation was saved from before.
-async function loadChatHistory() {
-  const data = await api.get("/api/chat/history");
-  (data.history || []).forEach((turn) => {
+function hideChatLockOverlay() {
+  chatUnlocked = true;
+  document.getElementById("chatLockOverlay").classList.add("hidden");
+}
+
+// Shows a saved conversation's turns as chat bubbles, without re-playing audio.
+function renderChatHistory(history) {
+  history.forEach((turn) => {
     appendBubble(turn.question_display, "user");
     const bubble = appendBubble("", "bot");
     renderBotContent(bubble, turn.answer_display);
     addCopyButton(bubble, turn.answer_display);
-    addSpeakButton(bubble, turn.answer_display); // don't auto-play old messages
+    addSpeakButton(bubble, turn.answer_display);
   });
   const chatLog = document.getElementById("chatLog");
   chatLog.scrollTop = chatLog.scrollHeight;
+}
+
+async function unlockChat() {
+  const key = document.getElementById("chatKeyInput").value;
+  if (!key.trim()) {
+    setHint(document.getElementById("chatKeyHint"), MESSAGES.chatKeyRequired, "error");
+    return;
+  }
+  const res = await postWithHint("chatKeyHint", "/api/chat/unlock", { key }, {
+    pending: chatIsNewSession ? MESSAGES.starting : MESSAGES.unlocking,
+    onSuccess: () => (chatIsNewSession ? "Started." : MESSAGES.unlocked),
+  });
+  if (res.ok) {
+    hideChatLockOverlay();
+    document.getElementById("chatLog").innerHTML = "";
+    renderChatHistory(res.history || []);
+  }
+}
+
+// Wipes the saved conversation, on the server and on screen, and asks for a
+// new key before you can chat again.
+async function clearChat() {
+  await api.post("/api/chat/clear", {});
+  document.getElementById("chatLog").innerHTML = "";
+  showChatLockOverlay();
+}
+
+async function forgotChatKey() {
+  if (!confirm(MESSAGES.confirmClearChat)) return;
+  await clearChat();
 }
 
 function appendBubble(text, who) {
@@ -939,7 +990,7 @@ document.getElementById("cpuThreads").addEventListener("change", async (e) => {
 // `question`/`questionDisplay` are only passed when sending a voice message;
 // a typed message is read straight from the input box instead.
 async function sendChat(question, questionDisplay) {
-  if (chatBusy) return;
+  if (chatBusy || !chatUnlocked) return;
   const typed = question === undefined;
   const input = document.getElementById("chatInput");
   if (typed) {
@@ -993,7 +1044,7 @@ let audioChunks = [];
 let isRecording = false;
 
 async function toggleMic() {
-  if (chatBusy) return;
+  if (chatBusy || !chatUnlocked) return;
   const micBtn = document.getElementById("chatMicBtn");
 
   if (isRecording) {
@@ -1058,7 +1109,18 @@ async function handleRecordedAudio() {
 document.getElementById("chatSendBtn").addEventListener("click", () => sendChat());
 document.getElementById("chatStopBtn").addEventListener("click", stopChat);
 document.getElementById("chatMicBtn").addEventListener("click", toggleMic);
-document.getElementById("clearChatBtn").addEventListener("click", clearChat);
+document.getElementById("clearChatBtn").addEventListener("click", () => {
+  if (confirm(MESSAGES.confirmClearChat)) clearChat();
+});
+
+document.getElementById("chatUnlockBtn").addEventListener("click", unlockChat);
+document.getElementById("chatKeyInput").addEventListener("keydown", (e) => {
+  if (e.key === "Enter") {
+    e.preventDefault();
+    unlockChat();
+  }
+});
+document.getElementById("chatForgotKeyBtn").addEventListener("click", forgotChatKey);
 
 document.getElementById("chatInput").addEventListener("input", autoGrowChatInput);
 document.getElementById("chatInput").addEventListener("keydown", (e) => {
@@ -1071,4 +1133,4 @@ document.getElementById("chatInput").addEventListener("keydown", (e) => {
 
 // Init
 loadSpeechLanguages().then(refreshStatus);
-loadChatHistory();
+showChatLockOverlay();

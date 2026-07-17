@@ -140,6 +140,10 @@ class CpuThreadsBody(BaseModel):
     threads: Optional[int] = None  # blank = let the computer decide automatically
 
 
+class ChatUnlockBody(BaseModel):
+    key: str
+
+
 class ChatLanguageBody(BaseModel):
     language: str
 
@@ -390,8 +394,26 @@ def set_chat_memory(body: ChatMemoryBody):
     settings = config.update_settings(patch)
     return {"ok": True, "history_turns": settings["chat_history_turns"], "max_new_tokens": settings["chat_max_new_tokens"]}
 
+@app.get("/api/chat/session_exists")
+def chat_session_exists():
+    """Whether there's a saved conversation waiting for its key, so the
+    dashboard can ask for a new key or an existing one by name."""
+    return {"exists": chat_history.exists()}
+
+@app.post("/api/chat/unlock")
+@api_errors
+def unlock_chat(body: ChatUnlockBody):
+    """Check a key against the saved conversation (or start a new one with
+    it, if nothing's saved yet) and hand back the conversation unlocked."""
+    history = chat_history.unlock(body.key)
+    return {"ok": True, "history": history}
+
+
 @app.post("/api/chat")
 def chat(body: ChatBody):
+    if not chat_history.is_unlocked():
+        return {"ok": False, "error": messages.CHAT_LOCKED}
+
     with chat_lock:
         if chat_job["active"]:
             return {"ok": False, "error": messages.ANSWER_IN_PROGRESS}
@@ -465,8 +487,9 @@ def chat(body: ChatBody):
 
 
 @app.get("/api/chat/history")
+@api_errors
 def get_chat_history():
-    return {"history": chat_history.load()}
+    return {"ok": True, "history": chat_history.load()}
 
 
 @app.post("/api/chat/clear")

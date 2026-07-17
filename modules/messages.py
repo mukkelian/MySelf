@@ -46,6 +46,9 @@ PROVIDE_DESTINATION_PATH = "Provide a destination path."
 
 # Chat
 ANSWER_IN_PROGRESS = "MySelf is still answering the previous question. Wait for it to finish or stop it first."
+CHAT_KEY_REQUIRED = "Enter a key to start chatting."
+CHAT_KEY_INCORRECT = "That key doesn't match this conversation. Try again, or clear the chat to start over with a new key."
+CHAT_LOCKED = "Enter your chat key first."
 
 # Speech, language, and translation
 UNSUPPORTED_LANGUAGE = "Unsupported language."

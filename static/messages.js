@@ -19,6 +19,10 @@ const MESSAGES = {
   speechSynthesisFailed: "Speech synthesis failed.",
   generationStoppedEarly: "Generation stopped early.",
   usingDefaultTranslateModel: "Using default per-language translation model.",
+  chatKeyRequired: "Enter a key to start chatting.",
+  unlocking: "Unlocking...",
+  unlocked: "Unlocked.",
+  confirmClearChat: "Clear the chat? This can't be undone, and you'll need a new key to start again.",
 };
 
 // Turns a count into "1 pair" / "2 pairs" so that pluralization logic isn't

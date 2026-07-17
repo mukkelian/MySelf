@@ -70,6 +70,21 @@
             <button class="btn primary" id="chatSendBtn">Send</button>
             <button class="btn danger" id="chatStopBtn" disabled>Stop</button>
           </div>
+
+          <div class="chat-lock-overlay" id="chatLockOverlay">
+            <div class="chat-lock-box">
+              <h2 id="chatLockHeading">Enter your chat key</h2>
+              <p id="chatLockDescription">
+                This key locks your saved conversation on disk. Use the same key
+                each time to keep talking in the same conversation, or clear the
+                chat to wipe it and start fresh with a new key.
+              </p>
+              <input type="password" id="chatKeyInput" placeholder="e.g. Mukesh" autocomplete="off" />
+              <button class="btn primary big" id="chatUnlockBtn">Unlock chat</button>
+              <div class="hint" id="chatKeyHint"></div>
+              <button class="btn danger hidden" id="chatForgotKeyBtn">Forgot your key? Clear the chat</button>
+            </div>
+          </div>
         </div>
 
         <div class="resizer" id="chatResizer"></div>
