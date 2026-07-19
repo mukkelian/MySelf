@@ -156,30 +156,11 @@ function setActiveBanner(dotId, textId, modelPath) {
 async function refreshStatus() {
   const settings = await api.get("/api/settings");
 
-  const datasetDot = document.getElementById("datasetDot");
-  const datasetText = document.getElementById("datasetStatusText");
-  if (settings.dataset_target_file) {
-    datasetDot.classList.add("ok");
-    datasetText.textContent = settings.dataset_target_file.split("/").pop();
-  } else {
-    datasetDot.classList.remove("ok");
-    datasetText.textContent = "No dataset";
-  }
   if (datasetTargetPath === null && settings.dataset_target_file) {
     setDatasetTargetPath(settings.dataset_target_file);
     await refreshDatasetPreview();
   }
   applyDatasetPreviewFontSize(settings.dataset_preview_font_size || 14);
-
-  const chatModelDot = document.getElementById("chatModelDot");
-  const chatModelText = document.getElementById("chatModelStatusText");
-  if (settings.chat_model_path) {
-    chatModelDot.classList.add("ok");
-    chatModelText.textContent = settings.chat_model_path.split("/").pop();
-  } else {
-    chatModelDot.classList.remove("ok");
-    chatModelText.textContent = "No chat model";
-  }
 
   setActiveBanner("ftActiveDot", "ftActiveModelText", settings.finetune.model_path);
   setActiveBanner("ragActiveDot", "ragActiveModelText", settings.rag.model_path);

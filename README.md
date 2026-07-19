@@ -357,6 +357,20 @@ key can start a fresh conversation. This only covers the chat
 conversation — other saved state (`settings.json`, your dataset files,
 model folders) is unaffected and stored as before.
 
+**Customizing how the model behaves**: the instructions sent to the model
+alongside every question live in plain text files under `prompts/`, not
+hardcoded in the app — edit them any time to change MySelf's behavior, no
+code changes needed, and changes apply on your very next message (no
+restart required):
+- `prompts/WhoAmI.txt` — the model's overall identity/behavior (e.g. "if
+  asked to correct text, only fix it — don't add a greeting or new
+  content").
+- `prompts/UseContext.txt` — the instruction shown before RAG-retrieved
+  context, when a chat model has a RAG index next to it.
+
+Both are created automatically with sensible defaults the first time you
+chat, so there's always something there to edit.
+
 ## Notes & limits
 
 - Fine-tuning supports both `peft` LoRA adapters (default, fast) and full

@@ -24,12 +24,33 @@ apply_cpu_thread_setting()
 
 _CACHE = {"path": None, "device": None, "model": None, "tokenizer": None}
 
-DEFAULT_SYSTEM_PROMPT = (
+PROMPTS_DIR = os.path.join(config.PROJECT_ROOT, "prompts")
+
+# Used only if the file below doesn't exist yet - it's then written out as a
+# starting point, so editing that file (no code changes needed) is enough to
+# change how MySelf behaves.
+_DEFAULT_WHOAMI = (
     "You are a knowledgeable, helpful personal assistant. Answer formally and "
     "thoroughly. Use the conversation so far to stay on topic: if the user "
     "asks you to continue, expand on, or finish a previous answer, keep "
     "writing that same thing rather than switching subjects."
 )
+_DEFAULT_USE_CONTEXT = "Use the following context to answer."
+
+
+def _read_prompt_file(filename: str, default: str) -> str:
+    """Read a user-editable prompt from prompts/<filename>, creating it with
+    `default` the first time so there's something to edit. Read fresh every
+    call, so edits apply immediately without restarting MySelf."""
+    os.makedirs(PROMPTS_DIR, exist_ok=True)
+    path = os.path.join(PROMPTS_DIR, filename)
+    if not os.path.isfile(path):
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(default)
+        return default
+    with open(path, "r", encoding="utf-8") as f:
+        text = f.read().strip()
+    return text or default
 
 MAX_HISTORY_TURNS = 6
 
@@ -118,14 +139,16 @@ def generate(
     device = get_device(device_preference)
 
     history = (history or [])[-max_history_turns:] if max_history_turns > 0 else []
+    system_prompt = _read_prompt_file("WhoAmI.txt", _DEFAULT_WHOAMI)
 
     user_content = (
-        f"Use the following context to answer.\n\nContext:\n{context}\n\nQuestion: {question}"
+        f"{_read_prompt_file('UseContext.txt', _DEFAULT_USE_CONTEXT)}\n\n"
+        f"Context:\n{context}\n\nQuestion: {question}"
         if context else question
     )
 
     if getattr(tokenizer, "chat_template", None):
-        messages = [{"role": "system", "content": DEFAULT_SYSTEM_PROMPT}]
+        messages = [{"role": "system", "content": system_prompt}]
         for turn in history:
             messages.append({"role": "user", "content": turn["question"]})
             messages.append({"role": "assistant", "content": turn["answer"]})
@@ -143,7 +166,7 @@ def generate(
             f"Context:\n{context}\n\nQuestion: {question}\nAnswer:" if context
             else f"Question: {question}\nAnswer:"
         )
-        prompt = "\n\n".join([DEFAULT_SYSTEM_PROMPT] + turns + [current])
+        prompt = "\n\n".join([system_prompt] + turns + [current])
         encoded = tokenizer(prompt, return_tensors="pt", truncation=True, max_length=1536).to(device)
 
     stopping_criteria = (
