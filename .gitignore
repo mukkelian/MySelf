@@ -20,3 +20,4 @@ chat_history.enc
 .DS_Store
 *.swp
 
+*.old
